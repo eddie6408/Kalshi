@@ -562,6 +562,11 @@ def main() -> int:
                 if time.time() - last_logged >= 300:
                     last_logged = time.time()
                     log.info("HEARTBEAT  %s", line)
+                    # Cache and feed counters, cumulative since start. The
+                    # only way to tell whether the feed is earning its keep
+                    # is to compare this line with it off and with it on.
+                    log.info("MARKET STATE  %s | feed %s", state.stats.summary(),
+                             feed.stats.summary() if feed_cfg.enabled else "off")
                 if all(w.health.suspended for w in supervisor.workers):
                     print(f"\n{R}  every worker is suspended; nothing left to "
                           f"do.{X}\n  {supervisor.summary()}\n")
