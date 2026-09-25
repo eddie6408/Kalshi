@@ -1,8 +1,27 @@
 # Package 14A — Authoritative sources & data provenance
 
-**Status: STAGED — not implemented.** Do not start until the operator gives the
-signal ("execute 14A" or similar). Analysis done 2026-09-25 against commit
-`81714de` on the droplet (`/opt/kalshi/trading/kalshi-bot`).
+**Status: phases 1–3 DEPLOYED 2026-09-25** (commits `3c649b3`, `a3b3674`,
+merged to `main`, bot restarted, self-test 668 passed / 0 failed).
+**Phase 4 (gates) NOT started**: it waits for at least 24 h of shadow data and
+the operator's answers to section 7. Phase 5 waits for 20+ days per station
+(~2026-10-06/08).
+
+Decision taken at execution (operator, 2026-09-25): settlement-grade
+temperatures come from the **NWS Daily Climate Report (CLI)** named in
+Kalshi's rules (CLINYC, CLIMIA, CLIMDW, CLIDEN, CLIAUS, CLILAX), read at its
+origin on api.weather.gov. The Weather Company is registered as the
+settlement authority (`twc_settlement`, `read_by_bot: false`): its Kalshi
+portal has no public API and republishes the NWS reports, and scraping it is
+ruled out by this spec. A paid TWC API key could be added later as a
+cross-check.
+
+Finding at deployment: the old hourly-observation scoring read 0.4–0.8 °F
+warm against the official report for 2026-09-24 (MDW 69.8 vs 69, DEN 71.6 vs
+71, AUS 98.6 vs 98, MIA 91.4 vs 91). Station-bias numbers measured before
+this change carry that offset.
+
+The original analysis (2026-09-25, against commit `81714de` on the droplet,
+`/opt/kalshi/trading/kalshi-bot`) follows.
 
 Source spec: section 14A "Authoritative information sources & data provenance"
 (pasted by the operator 2026-09-25). This file is the implementation plan for
