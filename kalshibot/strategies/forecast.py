@@ -374,6 +374,13 @@ class ForecastStrategy:
             self._skip(m, "estimator declined", estimate.skip_reason or "")
             return None
         ev = estimate.evidence or {}
+        # Data checks are RECORDED for every forecast the estimator prices,
+        # whatever its lead time - the conflict threshold is fitted from
+        # these rows, and most of the day every market is past the lead gate.
+        gate_result = None
+        if self.gates is not None:
+            gate_result = data_gates.evaluate(ev, self.gates, self.monitor, self.name)
+            self._record_checks(m, ev, gate_result)
         lead = ev.get("lead_hours")
         if (self.cfg.max_lead_hours > 0 and lead is not None
                 and float(lead) > self.cfg.max_lead_hours):
@@ -390,10 +397,10 @@ class ForecastStrategy:
             return None
 
         # --- is the outside data good enough to trade on? (14A phase 4) ---
-        if self.gates is not None:
-            result = data_gates.evaluate(ev, self.gates, self.monitor, self.name)
-            self._record_checks(m, ev, result)
-            blocked = result.blocked
+        # Evaluated and recorded above, for every lead time; acted on here,
+        # only for markets inside the window we would actually trade.
+        if gate_result is not None:
+            blocked = gate_result.blocked
             if blocked is not None:
                 self._skip(m, blocked.gate.lower().replace("_", " "), blocked.detail)
                 if blocked.gate == "DATA_CONFLICT":

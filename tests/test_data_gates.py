@@ -241,3 +241,25 @@ def test_the_fit_counts_city_days_not_rows():
         assert days == {("KXHIGHLAX", "2026-09-25"): 6.0,
                         ("KXHIGHNY", "2026-09-25"): 1.0}
         assert fit.percentile([1.0, 2.0, 3.0], 50) == 2.0
+
+
+def test_checks_are_recorded_past_the_lead_gate_but_not_acted_on():
+    """Most of the day every market is past max_lead_hours. Their data
+    checks must still be recorded (the fit needs them), but a conflict on a
+    market we would not trade anyway must not alert anyone."""
+    sent = []
+    import kalshibot.strategies.forecast as fmod
+    old = fmod.ALERTS
+    fmod.ALERTS = Notifier(topic="t", post=lambda *a, **k: sent.append(k))
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            j = Journal(Path(tmp) / "j.db")
+            ev = _ev(cross_check_diff_f=6.4, lead_hours=30.0)
+            s = ForecastStrategy(EvEstimator(ev), FEES, cfg(max_lead_hours=6),
+                                 journal=j, gates=GateConfig())
+            assert s.find([mkt()], {"KXFAKE-1": book()}, 500.0) == []
+            assert s.skips[-1].reason == "too far out to have skill"
+            assert j.conn.execute("SELECT COUNT(*) FROM data_checks").fetchone()[0] == 1
+            assert sent == []
+    finally:
+        fmod.ALERTS = old
