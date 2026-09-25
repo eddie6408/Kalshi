@@ -159,6 +159,10 @@ weather:
     - ticker_prefix: KXHIGHNY
       label: "NYC daily high"
       station: KNYC
+      # The NWS Daily Climate Report Kalshi's rules name (CLINYC etc.)
+      # - the official daily value The Weather Company publishes and
+      # Kalshi settles on. Scoring reads it from api.weather.gov.
+      climate_report: NYC
       latitude: 40.7789
       longitude: -73.9692
       kind: high
@@ -170,6 +174,7 @@ weather:
       # probability was being computed for the wrong airport.
       label: "Chicago Midway daily high"
       station: KMDW
+      climate_report: MDW
       latitude: 41.7868
       longitude: -87.7522
       kind: high
@@ -177,6 +182,7 @@ weather:
     - ticker_prefix: KXHIGHDEN
       label: "Denver daily high"
       station: KDEN
+      climate_report: DEN
       latitude: 39.8467
       longitude: -104.6562
       kind: high
@@ -184,6 +190,7 @@ weather:
     - ticker_prefix: KXHIGHAUS
       label: "Austin daily high"
       station: KAUS
+      climate_report: AUS
       latitude: 30.1830
       longitude: -97.6799
       kind: high
@@ -191,6 +198,7 @@ weather:
     - ticker_prefix: KXHIGHMIA
       label: "Miami daily high"
       station: KMIA
+      climate_report: MIA
       latitude: 25.7906
       longitude: -80.3164
       kind: high
@@ -198,6 +206,7 @@ weather:
     - ticker_prefix: KXHIGHLAX
       label: "Los Angeles daily high"
       station: KLAX
+      climate_report: LAX
       latitude: 33.9382
       longitude: -118.3866
       kind: high
@@ -769,3 +778,107 @@ arb_loop:
   # a closed board costs the same fifteen minutes and reads books nobody is
   # quoting, so the loop waits this long between status checks instead.
   closed_check_seconds: 900
+
+# ---------------------------------------------------------------------
+# SOURCES  (package 14A - docs/packages/14A-source-provenance.md)
+# ---------------------------------------------------------------------
+# Every outside source the bot reads, who publishes it, how authoritative it
+# is (tier 1 = the organisation responsible for the information, 4 = the
+# general internet), what it is used for, and what may stand in for it.
+#
+# Rules enforced when this loads (kalshibot/sources.py):
+#   - tier 4 may only be used for discovery, never as a trading input
+#   - a fallback must be named here in advance, and may not be tier 4
+#   - no fallback cycles; after the last fallback comes NO DATA -> NO TRADE
+#
+# This section MEASURES and RECORDS. Nothing in it blocks a trade yet; the
+# gates that act on health and freshness are 14A phase 4.
+sources:
+  # NWS asks API users for a contact address in the User-Agent. Blank until
+  # the operator supplies one.
+  nws_contact: ""
+
+  # Fetch the NWS gridpoint forecast alongside every good ensemble and record
+  # both (14A "source redundancy"). Recorded only - a disagreement does not
+  # block anything until the phase-4 conflict gate, whose threshold will be
+  # fitted from what this collects.
+  cross_check_forecasts: true
+
+  health:
+    down_after_failures: 3      # this many failures in a row -> DOWN
+    degraded_error_rate: 0.25   # over the last `window` calls -> DEGRADED
+    window: 20
+
+  registry:
+    kalshi_rest:
+      publisher: "Kalshi (exchange)"
+      tier: 1
+      roles: [market_data]
+      endpoint: "https://external-api.demo.kalshi.co/trade-api/v2"
+      required_by: [weather_temperature, arbitrage]
+
+    kalshi_ws:
+      publisher: "Kalshi (exchange)"
+      tier: 1
+      roles: [market_data]
+      endpoint: "wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2"
+      fallback_to: kalshi_rest
+      notes: "Order-book stream. Off until the feed is enabled; REST covers it."
+
+    kalshi_live_market_data:
+      publisher: "Kalshi (exchange)"
+      tier: 1
+      roles: [market_data]
+      endpoint: "https://external-api.kalshi.com/trade-api/v2"
+      notes: "Production books, public GET only - the execution-cost probe."
+
+    open_meteo_ensemble:
+      publisher: "Open-Meteo, redistributing NOAA GEFS, DWD ICON-EPS and ECMWF IFS ENS"
+      tier: 2
+      roles: [primary]
+      endpoint: "https://ensemble-api.open-meteo.com/v1/ensemble"
+      required_by: [weather_temperature]
+      fallback_to: nws_gridpoint
+      # Model runs are 6-12 h apart and published hours after they start;
+      # ECMWF's newest run is routinely 18-24 h old. Older than this is stale.
+      max_data_age_seconds: 129600
+
+    open_meteo_model_runs:
+      publisher: "Open-Meteo (model run metadata)"
+      tier: 2
+      roles: [reference]
+      endpoint: "https://ensemble-api.open-meteo.com/data/{model}/static/meta.json"
+      notes: "Which model run the ensemble came from - the forecast's vintage."
+
+    nws_gridpoint:
+      publisher: "NOAA National Weather Service"
+      tier: 1
+      roles: [fallback, cross_check]
+      endpoint: "https://api.weather.gov/gridpoints/{office}/{x},{y}"
+      max_data_age_seconds: 43200
+      notes: "Single-value forecast. Trading on it alone is already refused (forecast.require_primary_source)."
+
+    nws_observations:
+      publisher: "NOAA National Weather Service"
+      tier: 1
+      roles: [observation, fallback]
+      endpoint: "https://api.weather.gov/stations/{station}/observations"
+      max_data_age_seconds: 7200
+      notes: "Hourly station readings. The only real-time view of today's high; scoring fallback when the climate report is missing."
+
+    nws_climate_report:
+      publisher: "NOAA National Weather Service (Daily Climate Report, CLI)"
+      tier: 1
+      roles: [observation]
+      endpoint: "https://api.weather.gov/products/types/CLI/locations/{location}"
+      fallback_to: nws_observations
+      notes: "The official daily max/min Kalshi's rules name (CLINYC, CLIMIA, ...). Scoring truth."
+
+    twc_settlement:
+      publisher: "The Weather Company"
+      tier: 1
+      roles: [settlement]
+      endpoint: "https://weather.com/kalshi"
+      structured: false
+      read_by_bot: false
+      notes: "Kalshi's named settlement source (series settlement_sources). No public API; it republishes the NWS climate report, which the bot reads at the origin instead."

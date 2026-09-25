@@ -225,8 +225,59 @@ CREATE TABLE IF NOT EXISTS runs (
     started_ts TEXT, ended_ts TEXT, mode TEXT, note TEXT
 );
 
+-- Package 14A. One row per external fetch that feeds a decision: WHO
+-- published it, WHEN they produced it, WHEN we retrieved it, WHAT it said.
+CREATE TABLE IF NOT EXISTS source_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    retrieved_at TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    publisher TEXT,
+    tier INTEGER,
+    endpoint TEXT,
+    data_type TEXT,
+    subject TEXT,
+    target_date TEXT,
+    value REAL,
+    value_json TEXT,
+    data_time TEXT,
+    data_vintage TEXT,
+    latency_ms REAL
+);
+
+-- Latest health per source, rewritten every heartbeat so the monitor and
+-- the dashboard can show it without being inside the bot's process.
+CREATE TABLE IF NOT EXISTS source_health (
+    source_id TEXT PRIMARY KEY,
+    updated_at TEXT,
+    state TEXT,
+    detail TEXT,
+    publisher TEXT,
+    tier INTEGER,
+    calls INTEGER,
+    failures INTEGER,
+    consecutive_failures INTEGER,
+    error_rate REAL,
+    last_success_at TEXT,
+    last_failure_at TEXT,
+    last_status INTEGER,
+    last_error TEXT,
+    last_latency_ms REAL,
+    last_data_time TEXT
+);
+
+-- What Kalshi says each series settles on, as read from the exchange.
+CREATE TABLE IF NOT EXISTS settlement_sources (
+    series TEXT NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL DEFAULT '',
+    first_seen TEXT,
+    last_seen TEXT,
+    PRIMARY KEY (series, name, url)
+);
+
 CREATE INDEX IF NOT EXISTS idx_decisions_ticker ON decisions(ticker);
 CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades(ticker);
+CREATE INDEX IF NOT EXISTS idx_source_obs_source ON source_observations(source_id, retrieved_at);
 """
 
 
@@ -236,6 +287,11 @@ class JournalError(RuntimeError):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _ids(ids) -> str | None:
+    """[3, 7] -> "3,7". The provenance ids behind a row, or None."""
+    return ",".join(str(int(i)) for i in ids) if ids else None
 
 
 class Journal:
@@ -345,12 +401,16 @@ class Journal:
         self.conn.commit()
 
     def log_forecast(self, *, series: str, station: str, target_date: str,
-                     mean_f: float, sigma_f: float, members: int, lead_hours: float) -> None:
+                     mean_f: float, sigma_f: float, members: int, lead_hours: float,
+                     source: str | None = None,
+                     provenance: list[int] | None = None) -> None:
         self.conn.execute(
             """INSERT INTO forecasts (ts, series, station, target_date,
-               predicted_mean_f, predicted_sigma_f, members, lead_hours)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (_now(), series, station, target_date, mean_f, sigma_f, members, lead_hours),
+               predicted_mean_f, predicted_sigma_f, members, lead_hours,
+               source, provenance)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (_now(), series, station, target_date, mean_f, sigma_f, members, lead_hours,
+             source, _ids(provenance)),
         )
         self.conn.commit()
 
@@ -361,6 +421,15 @@ class Journal:
     _ADDED_COLUMNS = {
         "probability_log": {
             "market_yes_bid_cents": "REAL",
+            # 14A: the source_observations ids behind this probability.
+            "provenance": "TEXT",
+        },
+        "forecasts": {
+            # 14A: which source the forecast came from, the observation ids
+            # behind it, and which source supplied actual_f.
+            "source": "TEXT",
+            "provenance": "TEXT",
+            "actual_source": "TEXT",
         },
     }
 
@@ -392,7 +461,8 @@ class Journal:
                         market_yes_bid_cents: float | None = None,
                         target_date: str = "", strike: str = "",
                         lead_hours: float | None = None,
-                        traded: bool = False) -> None:
+                        traded: bool = False,
+                        provenance: list[int] | None = None) -> None:
         """Record what we thought, before we know whether it was right.
 
         Written for every market an estimator prices - traded or not. Scoring
@@ -404,8 +474,8 @@ class Journal:
                 """INSERT OR IGNORE INTO probability_log
                    (ts, strategy, estimator, series, ticker, target_date, strike,
                     our_probability, confidence, market_yes_cents,
-                    market_yes_bid_cents, lead_hours, traded)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    market_yes_bid_cents, lead_hours, traded, provenance)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (_now(), strategy, estimator, series, ticker, target_date, strike,
                  float(our_probability),
                  None if confidence is None else float(confidence),
@@ -413,7 +483,7 @@ class Journal:
                  None if market_yes_bid_cents is None
                  else float(market_yes_bid_cents),
                  None if lead_hours is None else float(lead_hours),
-                 1 if traded else 0),
+                 1 if traded else 0, _ids(provenance)),
             )
             self.conn.commit()
         except sqlite3.Error as exc:
@@ -967,6 +1037,72 @@ class Journal:
     def end_run(self, run_id: int) -> None:
         self.conn.execute("UPDATE runs SET ended_ts=? WHERE id=?", (_now(), run_id))
         self.conn.commit()
+
+    # ---------------- sources (package 14A) ----------------
+    def log_source_observation(self, *, source_id: str, publisher: str = "",
+                               tier: int | None = None, endpoint: str = "",
+                               data_type: str = "", subject: str = "",
+                               target_date: str | None = None,
+                               value: float | None = None, value_json: Any = None,
+                               data_time: str | None = None, data_vintage: Any = None,
+                               retrieved_at: str | None = None,
+                               latency_ms: float | None = None) -> int:
+        """One external data point, with where and when it came from."""
+        def _j(v):
+            if v is None or isinstance(v, str):
+                return v
+            return json.dumps(v, default=str)[:4000]
+        cur = self.conn.execute(
+            """INSERT INTO source_observations
+               (retrieved_at, source_id, publisher, tier, endpoint, data_type,
+                subject, target_date, value, value_json, data_time, data_vintage,
+                latency_ms)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (retrieved_at or _now(), source_id, publisher, tier, endpoint,
+             data_type, subject, target_date,
+             None if value is None else float(value), _j(value_json),
+             data_time, _j(data_vintage), latency_ms),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def save_source_health(self, rows: list[dict]) -> None:
+        now = _now()
+        cols = ("state", "detail", "publisher", "tier", "calls", "failures",
+                "consecutive_failures", "error_rate", "last_success_at",
+                "last_failure_at", "last_status", "last_error",
+                "last_latency_ms", "last_data_time")
+        self.conn.executemany(
+            f"""INSERT INTO source_health (source_id, updated_at, {", ".join(cols)})
+                VALUES (?, ?, {", ".join("?" for _ in cols)})
+                ON CONFLICT(source_id) DO UPDATE SET updated_at=excluded.updated_at,
+                {", ".join(f"{c}=excluded.{c}" for c in cols)}""",
+            [(r["source_id"], now, *(r.get(c) for c in cols)) for r in rows])
+        self.conn.commit()
+
+    def record_settlement_sources(self, series: str,
+                                  sources: list[dict]) -> tuple[list, list]:
+        """Store what Kalshi says `series` settles on.
+
+        Returns (added, dropped) against what was stored before - both empty
+        when nothing changed, which is the normal case. A change means the
+        contract now resolves on something else, which a person should see.
+        """
+        now = _now()
+        seen = {(str(x.get("name") or ""), str(x.get("url") or ""))
+                for x in (sources or [])}
+        before = {(r["name"], r["url"]) for r in self.conn.execute(
+            "SELECT name, url FROM settlement_sources WHERE series=?", (series,))}
+        for name, url in seen:
+            self.conn.execute(
+                """INSERT INTO settlement_sources (series, name, url, first_seen, last_seen)
+                   VALUES (?,?,?,?,?)
+                   ON CONFLICT(series, name, url) DO UPDATE SET last_seen=excluded.last_seen""",
+                (series, name, url, now, now))
+        self.conn.commit()
+        if not before:
+            return [], []            # first sighting is not a change
+        return sorted(seen - before), sorted(before - seen)
 
     def close(self) -> None:
         self.conn.close()

@@ -33,6 +33,8 @@ from kalshibot.fees import FeeModel
 from kalshibot.forecast_scoring import score_pending
 from kalshibot.journal import Journal
 from kalshibot.market_state import MarketState
+from kalshibot.sources import (MONITOR, OFF, DOWN, HEALTHY, SourceConfigError,
+                               configure_from_settings, nws_user_agent)
 from kalshibot.wsfeed import FeedConfig, KalshiFeed
 from kalshibot.workers import Supervisor, Worker, WorkerConfig
 from kalshibot.logging_setup import setup_logging
@@ -40,6 +42,37 @@ from kalshibot.logging_setup import setup_logging
 log = logging.getLogger("arb")
 B, D, G, R, Y, C, X = ("\033[1m", "\033[2m", "\033[32m", "\033[31m",
                        "\033[33m", "\033[36m", "\033[0m")
+
+
+def check_settlement_sources(settings, market, journal) -> None:
+    """Package 14A: read, from the exchange, what each weather series settles
+    on; store it; and say so loudly if it changed or is not registered.
+
+    Kalshi's rules name the resolving source. It was a comment in config.yaml
+    until now - and a comment cannot notice the contract changing under it.
+    Never blocks startup: a failed lookup is logged and the bot carries on.
+    """
+    registered = {s.publisher for s in MONITOR.registry if "settlement" in s.roles}
+    for cfg in settings.get("weather.series") or []:
+        series = cfg.get("ticker_prefix")
+        if not series:
+            continue
+        try:
+            found = market.get_series(series).get("settlement_sources") or []
+        except Exception as exc:  # noqa: BLE001
+            log.warning("SOURCES  could not read %s settlement source: %s", series, exc)
+            continue
+        names = sorted({str(x.get("name") or "") for x in found})
+        added, dropped = journal.record_settlement_sources(series, found)
+        if added or dropped:
+            log.warning("SOURCES  %s settlement source CHANGED - now %s "
+                        "(added %s, dropped %s). Check the contract rules.",
+                        series, names, added, dropped)
+        stray = [n for n in names if n not in registered]
+        if stray:
+            log.warning("SOURCES  %s settles on %s, which is not a registered "
+                        "settlement source in config.yaml", series, stray)
+        log.info("SOURCES  %s settles on %s", series, ", ".join(names) or "?")
 
 
 def exchange_is_open(market) -> tuple[bool, str]:
@@ -299,6 +332,7 @@ def main() -> int:
 
     signer = Signer.from_settings(settings)
     market = MarketDataClient(settings.rest_base, signer)
+    series_client = market
     # Paper mode may price against the REAL book. Public market data, GET
     # only, no credential - see kalshibot/livebooks.py. Everything else
     # (discovery, market details, settlement) stays on demo.
@@ -336,6 +370,16 @@ def main() -> int:
     fees = FeeModel(settings.section("fees"))
     journal = Journal(settings.path("journal.database_path", "data/journal.db"))
 
+    # ---- package 14A: approved sources, health, provenance -------------
+    # The registry is validated here: a config that would let a tier-4
+    # source reach a trade, or improvise a fallback, does not start.
+    try:
+        configure_from_settings(settings, journal)
+    except SourceConfigError as exc:
+        print(f"\n{R}{B}REFUSED TO START{X}\n  sources: {exc}\n", file=sys.stderr)
+        return 6
+    check_settlement_sources(settings, series_client, journal)
+
     # ---- one shared view of the exchange -------------------------------
     # The scan and the position worker now read the SAME books instead of
     # each asking REST for prices that have not moved. The store forwards
@@ -352,6 +396,13 @@ def main() -> int:
 
     feed_cfg = FeedConfig.from_dict(settings.section("feed"))
     feed = KalshiFeed(state, signer, feed_cfg, env=settings.kalshi_env)
+
+    def _feed_probe():
+        if not feed_cfg.enabled:
+            return OFF, "feed disabled; books read over REST"
+        st = feed.stats
+        return (HEALTHY if st.connected_since else DOWN), st.summary()
+    MONITOR.add_probe("kalshi_ws", _feed_probe)
     stop_feed = threading.Event()
     feed_thread = None
     if feed_cfg.enabled:
@@ -512,11 +563,17 @@ def main() -> int:
         tz_by_series = {x["ticker_prefix"]: x.get("timezone", "America/New_York")
                         for x in (settings.get("weather.series") or [])}
 
+        cli_by_station = {x["station"]: x["climate_report"]
+                          for x in (settings.get("weather.series") or [])
+                          if x.get("station") and x.get("climate_report")}
+
         def scoring_pass():
             from kalshibot.weatherdata import WeatherData
-            wd = WeatherData(cache_seconds=1)
+            wd = WeatherData(cache_seconds=1,
+                             user_agent=nws_user_agent(settings.section("sources")))
             updated, looked_up = score_pending(
-                journal.conn, wd._session, tz_by_series)
+                journal.conn, wd._session, tz_by_series,
+                cli_by_station=cli_by_station)
             if updated:
                 log.info("SCORING  filled %d forecast rows from %d "
                          "station-days", updated, looked_up)
@@ -567,6 +624,11 @@ def main() -> int:
                     # is to compare this line with it off and with it on.
                     log.info("MARKET STATE  %s | feed %s", state.stats.summary(),
                              feed.stats.summary() if feed_cfg.enabled else "off")
+                    log.info("SOURCES  %s", MONITOR.summary())
+                    try:
+                        journal.save_source_health(MONITOR.snapshot())
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("could not save source health: %s", exc)
                 if all(w.health.suspended for w in supervisor.workers):
                     print(f"\n{R}  every worker is suspended; nothing left to "
                           f"do.{X}\n  {supervisor.summary()}\n")

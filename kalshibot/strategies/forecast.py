@@ -273,6 +273,7 @@ class ForecastStrategy:
                 strike=str(ev.get("strike", "")),
                 lead_hours=ev.get("lead_hours"),
                 traded=traded,
+                provenance=ev.get("provenance_ids"),
             )
             # The distribution behind the probability, for the second kind of
             # scoring: was the mean right, was sigma wide enough.
@@ -289,6 +290,8 @@ class ForecastStrategy:
                         sigma_f=float(ev.get("sigma_used_f", 0.0)),
                         members=int(ev.get("ensemble_members", 0)),
                         lead_hours=float(ev.get("lead_hours", 0.0)),
+                        source=ev.get("source"),
+                        provenance=ev.get("provenance_ids"),
                     )
         except Exception as exc:  # noqa: BLE001
             log.debug("could not record the forecast for %s: %s", m.ticker, exc)

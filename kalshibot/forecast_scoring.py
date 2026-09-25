@@ -15,13 +15,33 @@ Two entry points:
 
     score_pending()    fill actual_f for past days
     bias_by_station()  what the filled rows say, for the dashboard
+
+Where "what actually happened" comes from (package 14A)
+--------------------------------------------------------
+Kalshi's rules settle each market on a named NWS Daily Climate Report -
+"the maximum temperature recorded at New York City (CLINYC)" - as published
+by The Weather Company. So the truth is that report, read at its origin:
+
+    1. NWS Daily Climate Report (CLI), the FINAL one for the day. Not the
+       "VALID TODAY AS OF 4 PM" preliminary: that is a partial day.
+    2. Only if no final report exists FALLBACK_AFTER_HOURS after the day
+       ends: the maximum of the station's hourly observations, and the row
+       says so (forecasts.actual_source).
+
+The report's day runs midnight to midnight local STANDARD time, so during
+daylight saving it ends at 1 AM - which the hourly-observation fallback, on
+the local calendar day, does not match exactly. One more reason it is the
+fallback.
 """
 from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 import sqlite3
 from zoneinfo import ZoneInfo
+
+from . import sources as _sources
 
 log = logging.getLogger(__name__)
 
@@ -34,25 +54,137 @@ SETTLE_AFTER_HOURS = 6.0
 SPIKE_GAP_F = 5.0
 
 OBS_URL = "https://api.weather.gov/stations/{station}/observations"
+CLI_LIST_URL = "https://api.weather.gov/products/types/CLI/locations/{location}"
+CLI_PRODUCT_URL = "https://api.weather.gov/products/{product_id}"
+
+#: How long after the day ends to wait for the final climate report before
+#: settling for hourly observations. Reports normally arrive by morning.
+FALLBACK_AFTER_HOURS = 30.0
+
+#: At most this many report texts are fetched per lookup. The list is newest
+#: first and there are two or three a day, so a week back is well inside it.
+MAX_REPORTS_READ = 12
+
+_MONTHS = {m: i + 1 for i, m in enumerate(
+    ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY",
+     "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"])}
+_SUMMARY_RE = re.compile(r"CLIMATE SUMMARY FOR\s+([A-Z]+)\s+(\d{1,2})\s+(\d{4})")
+
+
+def parse_climate_report(text: str) -> dict | None:
+    """Read the date, finality and temperature extremes from a CLI product.
+
+    Returns {"date", "preliminary", "max_f", "min_f"} or None if the text is
+    not recognisably a daily climate report. "MM" (missing) reads as None.
+    """
+    if not text:
+        return None
+    up = text.upper()
+    m = _SUMMARY_RE.search(up)
+    if not m or m.group(1) not in _MONTHS:
+        return None
+    try:
+        day = dt.date(int(m.group(3)), _MONTHS[m.group(1)], int(m.group(2)))
+    except ValueError:
+        return None
+    start = up.find("TEMPERATURE (F)")
+    if start < 0:
+        return None
+    end = up.find("PRECIPITATION", start)
+    block = up[start:end if end > 0 else None]
+
+    def _first(label: str) -> int | None:
+        hit = re.search(rf"^\s*{label}\s+(-?\d+|MM)R?\b", block, re.M)
+        if not hit or hit.group(1) == "MM":
+            return None
+        return int(hit.group(1))
+
+    return {"date": day,
+            "preliminary": "VALID TODAY AS OF" in up or "VALID AS OF" in up,
+            "max_f": _first("MAXIMUM"),
+            "min_f": _first("MINIMUM")}
+
+
+def official_daily_extreme(session, location: str, target: dt.date,
+                           kind: str = "high",
+                           monitor: _sources.SourceMonitor | None = None
+                           ) -> tuple[float | None, int | None]:
+    """The day's official max (or min) from the FINAL NWS climate report.
+
+    Returns (value, provenance id). (None, None) when there is no final
+    report for `target` yet - which is normal until the morning after.
+    """
+    mon = monitor or _sources.MONITOR
+    list_url = CLI_LIST_URL.format(location=location)
+    try:
+        with mon.track("nws_climate_report") as call:
+            resp = session.get(list_url, params=None, timeout=30)
+            call.status = getattr(resp, "status_code", None)
+            resp.raise_for_status()
+            products = (resp.json() or {}).get("@graph") or []
+    except Exception as exc:  # noqa: BLE001
+        log.debug("climate report list failed for %s: %s", location, exc)
+        return None, None
+
+    for item in products[:MAX_REPORTS_READ]:
+        issued = _sources.to_utc(item.get("issuanceTime"))
+        # Newest first; a report issued before the target day began cannot
+        # be about it, and neither can anything older.
+        if issued is not None and issued.date() < target:
+            break
+        pid = item.get("id")
+        if not pid:
+            continue
+        try:
+            with mon.track("nws_climate_report") as call:
+                r = session.get(CLI_PRODUCT_URL.format(product_id=pid),
+                                params=None, timeout=30)
+                call.status = getattr(r, "status_code", None)
+                r.raise_for_status()
+                text = (r.json() or {}).get("productText") or ""
+                call.data_time = item.get("issuanceTime")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("climate report %s failed: %s", pid, exc)
+            continue
+        rep = parse_climate_report(text)
+        if not rep or rep["date"] != target or rep["preliminary"]:
+            continue
+        value = rep["max_f"] if kind == "high" else rep["min_f"]
+        if value is None:
+            continue
+        oid = mon.observe(
+            "nws_climate_report", endpoint=CLI_PRODUCT_URL.format(product_id=pid),
+            data_type=f"official_daily_{'max' if kind == 'high' else 'min'}_f",
+            subject=f"CLI{location}", target_date=target.isoformat(),
+            value=float(value),
+            value_json={"product_id": pid, "office": item.get("issuingOffice"),
+                        "final": True},
+            data_time=item.get("issuanceTime"))
+        return float(value), oid
+    return None, None
 
 
 def observed_daily_max(session, station: str, tz_name: str,
-                       target: dt.date) -> float | None:
+                       target: dt.date,
+                       monitor: _sources.SourceMonitor | None = None) -> float | None:
     """Highest temperature observed at the station over one local day."""
+    mon = monitor or _sources.MONITOR
     tz = ZoneInfo(tz_name)
     start = dt.datetime.combine(target, dt.time(0, 0), tzinfo=tz)
     end = start + dt.timedelta(days=1)
     try:
-        resp = session.get(
-            OBS_URL.format(station=station),
-            params={"start": start.astimezone(dt.timezone.utc)
-                    .strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "end": end.astimezone(dt.timezone.utc)
-                    .strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "limit": 500},
-            timeout=30)
-        resp.raise_for_status()
-        feats = resp.json().get("features", [])
+        with mon.track("nws_observations") as call:
+            resp = session.get(
+                OBS_URL.format(station=station),
+                params={"start": start.astimezone(dt.timezone.utc)
+                        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "end": end.astimezone(dt.timezone.utc)
+                        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "limit": 500},
+                timeout=30)
+            call.status = getattr(resp, "status_code", None)
+            resp.raise_for_status()
+            feats = resp.json().get("features", [])
     except Exception as exc:  # noqa: BLE001
         log.debug("observation lookup failed for %s %s: %s", station, target, exc)
         return None
@@ -83,13 +215,23 @@ def observed_daily_max(session, station: str, tz_name: str,
 
 
 def score_pending(conn: sqlite3.Connection, session, tz_by_series: dict,
-                  now: dt.datetime | None = None, limit: int = 40) -> tuple[int, int]:
+                  now: dt.datetime | None = None, limit: int = 40,
+                  cli_by_station: dict | None = None,
+                  monitor: _sources.SourceMonitor | None = None) -> tuple[int, int]:
     """Fill actual_f for every forecast whose target day is safely over.
 
     Returns (rows updated, days looked up). Observations are fetched once per
     (station, day) however many forecasts point at it - 470 forecast rows are
     only a couple of dozen station-days.
+
+    cli_by_station maps a station to its climate-report location (KNYC ->
+    NYC). With it, the final climate report is the truth and hourly
+    observations are the fallback after FALLBACK_AFTER_HOURS; without it,
+    observations only (the original behaviour).
     """
+    cli_by_station = cli_by_station or {}
+    has_source_col = "actual_source" in {
+        r[1] for r in conn.execute("PRAGMA table_info(forecasts)")}
     now = now or dt.datetime.now(dt.timezone.utc)
     rows = conn.execute(
         "SELECT id, series, station, target_date FROM forecasts "
@@ -114,15 +256,40 @@ def score_pending(conn: sqlite3.Connection, session, tz_by_series: dict,
 
     updated = looked_up = 0
     for (station, tz_name, target), ids in list(wanted.items())[:limit]:
-        actual = observed_daily_max(session, station, tz_name, target)
         looked_up += 1
+        actual, used = None, "nws_observations"
+        location = cli_by_station.get(station)
+        if location:
+            actual, _oid = official_daily_extreme(session, location, target,
+                                                  "high", monitor)
+            used = "nws_climate_report"
+            if actual is None:
+                day_end = dt.datetime.combine(
+                    target + dt.timedelta(days=1), dt.time(0, 0),
+                    tzinfo=ZoneInfo(tz_name))
+                if now < day_end + dt.timedelta(hours=FALLBACK_AFTER_HOURS):
+                    continue            # the final report is not out yet
+                log.warning("SCORING  %s %s: no final climate report CLI%s "
+                            "%.0fh after the day; falling back to hourly "
+                            "observations", station, target, location,
+                            FALLBACK_AFTER_HOURS)
+                used = "nws_observations"
+        if actual is None:
+            actual = observed_daily_max(session, station, tz_name, target, monitor)
         if actual is None:
             continue
-        conn.executemany("UPDATE forecasts SET actual_f=? WHERE id=?",
-                         [(actual, i) for i in ids])
+        if has_source_col:
+            conn.executemany(
+                "UPDATE forecasts SET actual_f=?, actual_source=? WHERE id=?",
+                [(actual, used, i) for i in ids])
+        else:
+            conn.executemany("UPDATE forecasts SET actual_f=? WHERE id=?",
+                             [(actual, i) for i in ids])
         updated += len(ids)
-        log.info("SCORING  %s %s: observed %.1fF (%d forecast%s)",
-                 station, target, actual, len(ids), "" if len(ids) == 1 else "s")
+        log.info("SCORING  %s %s: %s %.1fF (%d forecast%s)",
+                 station, target,
+                 "official" if used == "nws_climate_report" else "observed",
+                 actual, len(ids), "" if len(ids) == 1 else "s")
     if updated:
         conn.commit()
     return updated, looked_up

@@ -39,6 +39,12 @@ class MarketDataClient:
     def get_market(self, ticker: str) -> Market:
         return self._c.get_market(ticker)
 
+    def get_series(self, series_ticker: str) -> dict:
+        """Series metadata, including `settlement_sources` - what the contract
+        resolves on, according to the exchange."""
+        raw = self._c._request("GET", f"/series/{series_ticker}", public_ok=True)
+        return (raw or {}).get("series") or {}
+
     def get_events(self, status: str = "open") -> list[dict]:
         return self._c.get_events(status=status)
 

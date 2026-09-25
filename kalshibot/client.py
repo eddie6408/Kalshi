@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from . import sources as _sources
 from .auth import Signer
 from .models import Market, Orderbook, Position
 
@@ -80,7 +81,46 @@ class KalshiClient:
         self._session.mount("http://", adapter)
 
     # ---------------- low level ----------------
+    @property
+    def source_id(self) -> str:
+        """The registered source (package 14A) this client reads."""
+        return "kalshi_rest" if "demo" in self.base_url else "kalshi_live_market_data"
+
     def _request(
+        self,
+        method: str,
+        path: str,
+        params: dict | None = None,
+        json_body: dict | None = None,
+        authed: bool = True,
+        public_ok: bool = False,
+    ) -> dict[str, Any]:
+        """Every call, with its outcome recorded against the source's health.
+
+        A 4xx other than 429 is OUR mistake (no such market, a rejected order),
+        not the exchange being unwell, so it does not count against it.
+        """
+        t0 = time.monotonic()
+        try:
+            out = self._request_once(method, path, params, json_body,
+                                     authed, public_ok)
+        except KalshiError as exc:
+            status = getattr(exc, "status", None)
+            ours = status is not None and 400 <= status < 500 and status != 429
+            _sources.MONITOR.record(self.source_id, ours, status=status,
+                                    latency_ms=(time.monotonic() - t0) * 1000,
+                                    error="" if ours else str(exc)[:200])
+            raise
+        except Exception as exc:
+            _sources.MONITOR.record(self.source_id, False,
+                                    latency_ms=(time.monotonic() - t0) * 1000,
+                                    error=f"{type(exc).__name__}: {exc}")
+            raise
+        _sources.MONITOR.record(self.source_id, True, status=200,
+                                latency_ms=(time.monotonic() - t0) * 1000)
+        return out
+
+    def _request_once(
         self,
         method: str,
         path: str,

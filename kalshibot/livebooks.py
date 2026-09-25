@@ -31,6 +31,7 @@ import logging
 
 import requests
 
+from . import sources as _sources
 from .depth import DepthBook, Level
 from .env_guard import assert_public_market_data
 
@@ -55,10 +56,16 @@ class LiveBookReader:
     def _get(self, path: str, params: dict | None = None) -> dict:
         """The only request this class can make. GET, allowlisted, no auth."""
         assert_public_market_data(self.base_url, path, "GET")
-        resp = self._session.get(f"{self.base_url}{path}", params=params,
-                                 timeout=self.timeout)
-        resp.raise_for_status()
-        return resp.json() or {}
+        with _sources.MONITOR.track("kalshi_live_market_data") as call:
+            resp = self._session.get(f"{self.base_url}{path}", params=params,
+                                     timeout=self.timeout)
+            call.status = getattr(resp, "status_code", None)
+            # A 404 is a market that does not exist on production, not the
+            # exchange being down.
+            if call.status == 404:
+                call.ok = True
+            resp.raise_for_status()
+            return resp.json() or {}
 
     # ------------------------------------------------------------------
     def orderbook(self, ticker: str, depth: int = 50) -> DepthBook | None:

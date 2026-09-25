@@ -260,6 +260,16 @@ class WeatherTemperatureEstimator:
         prob = min(0.995, max(0.005, prob))     # never claim certainty
         conf = self._confidence(fc, prob)
 
+        now = dt.datetime.now(dt.timezone.utc)
+
+        def _age(t):
+            return round((now - t).total_seconds()) if t is not None else None
+
+        def _iso(t):
+            return t.isoformat() if t is not None else None
+
+        cross_diff = (round(fc.mean - fc.cross_check_f, 2)
+                      if fc.cross_check_f is not None else None)
         return Estimate(
             probability_yes=prob,
             confidence=conf,
@@ -277,5 +287,21 @@ class WeatherTemperatureEstimator:
                 "sigma_used_f": round(self._sigma(fc), 2),
                 "observed_so_far_f": fc.observed_extreme_so_far,
                 "lead_hours": round(fc.lead_hours, 1),
+                # ---- provenance (package 14A): what the bot knew, and when.
+                # Ids point at journal source_observations rows. Ages are at
+                # the moment of THIS estimate, so a cached forecast shows its
+                # real age rather than looking freshly fetched.
+                "provenance_ids": list(fc.provenance),
+                "data_retrieved_at": _iso(fc.retrieved_at),
+                "fetch_age_seconds": _age(fc.retrieved_at),
+                "forecast_published_at": _iso(fc.data_time),
+                "forecast_age_seconds": _age(fc.data_time),
+                "forecast_vintage": fc.vintage or None,
+                "observation_time": _iso(fc.observation_time),
+                "observation_age_seconds": _age(fc.observation_time),
+                "cross_check_source": fc.cross_check_source or None,
+                "cross_check_f": (round(fc.cross_check_f, 2)
+                                  if fc.cross_check_f is not None else None),
+                "cross_check_diff_f": cross_diff,
             },
         )

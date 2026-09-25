@@ -8,6 +8,7 @@ what kept a retired engine alive by accident.
 from __future__ import annotations
 
 from .weather import WeatherTemperatureEstimator
+from ..sources import nws_user_agent
 from ..weatherdata import WeatherData
 
 ESTIMATORS = {
@@ -16,6 +17,8 @@ ESTIMATORS = {
         WeatherData(
             ensemble_models=s.get("weather.ensemble_models"),
             cache_seconds=int(s.get("loop.forecast_cache_seconds", 1800)),
+            cross_check=bool(s.get("sources.cross_check_forecasts", True)),
+            user_agent=nws_user_agent(s.section("sources")),
         ),
     ),
 }

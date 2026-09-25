@@ -4,10 +4,16 @@ Primary   : Open-Meteo ensemble API (many model members -> a real distribution)
 Secondary : NWS api.weather.gov gridpoint forecast (single deterministic value)
 Reality   : NWS latest observations, so we never predict a daily high that is
             lower than a temperature already recorded today.
+
+Every fetch is recorded against its registered source (package 14A,
+kalshibot/sources.py): health on the monitor, and one provenance row in the
+journal saying who published the number, when it was produced, and when we
+retrieved it. Recording never changes what is returned.
 """
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -15,12 +21,32 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from . import sources as _sources
+
 log = logging.getLogger(__name__)
 
 ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
+MODEL_META_URL = "https://ensemble-api.open-meteo.com/data/{model}/static/meta.json"
 NWS_POINTS = "https://api.weather.gov/points/{lat},{lon}"
 NWS_OBS = "https://api.weather.gov/stations/{station}/observations"
 HEADERS = {"User-Agent": "kalshibot/1.0 (personal trading research)", "Accept": "application/json"}
+
+#: The Open-Meteo model name we request -> the data set whose run metadata
+#: says which model run we got. Verified against meta.json on 2026-09-25.
+#: "seamless" blends resolutions; the near-term member set is the one listed.
+MODEL_RUN_METADATA = {
+    "gfs_seamless": "ncep_gefs025",
+    "icon_seamless": "dwd_icon_eps",
+    "ecmwf_ifs025": "ecmwf_ifs025_ensemble",
+}
+MODEL_RUN_CACHE_SECONDS = 600
+
+
+def _epoch_iso(value) -> str | None:
+    try:
+        return dt.datetime.fromtimestamp(float(value), dt.timezone.utc).isoformat()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
 
 
 @dataclass
@@ -31,6 +57,22 @@ class DailyTempForecast:
     source: str = ""
     observed_extreme_so_far: float | None = None
     lead_hours: float = 0.0
+    # ---- provenance (14A). None/empty means "not known", never "fresh". ----
+    #: journal source_observations ids behind this forecast
+    provenance: list[int] = field(default_factory=list)
+    #: when WE fetched it
+    retrieved_at: dt.datetime | None = None
+    #: when the PUBLISHER produced it: the oldest model run's release time for
+    #: the ensemble, NWS updateTime for the gridpoint
+    data_time: dt.datetime | None = None
+    #: which model runs, {model: initialisation time}
+    vintage: dict = field(default_factory=dict)
+    #: newest station observation behind observed_extreme_so_far
+    observation_time: dt.datetime | None = None
+    #: independent second opinion (14A redundancy). Recorded, not acted on.
+    cross_check_f: float | None = None
+    cross_check_source: str = ""
+    cross_check_data_time: dt.datetime | None = None
 
     @property
     def n_members(self) -> int:
@@ -81,7 +123,9 @@ class _Cache:
 
 class WeatherData:
     def __init__(self, ensemble_models: list[str] | None = None, cache_seconds: int = 1800,
-                 timeout: float = 25.0, forecast_days: int = 7):
+                 timeout: float = 25.0, forecast_days: int = 7,
+                 monitor: _sources.SourceMonitor | None = None,
+                 cross_check: bool = False, user_agent: str | None = None):
         self.models = ensemble_models or ["gfs_seamless", "icon_seamless", "ecmwf_ifs025"]
         #: How far ahead to ask for. Kalshi lists temperature markets several
         #: days out, and a window that stops short reads downstream as "0
@@ -91,7 +135,15 @@ class WeatherData:
         self.timeout = timeout
         self._session = requests.Session()
         self._session.headers.update(HEADERS)
+        if user_agent:
+            self._session.headers["User-Agent"] = user_agent
         self._grid_cache: dict = {}
+        self.monitor = monitor or _sources.MONITOR
+        #: Fetch the NWS gridpoint alongside a good ensemble, as an independent
+        #: second opinion (14A "source redundancy"). Recorded only; nothing
+        #: acts on a disagreement until 14A phase 4.
+        self.cross_check = bool(cross_check)
+        self._model_runs: tuple[float, dict] | None = None
 
     # ------------------------------------------------------------------
     def daily_extreme_forecast(
@@ -106,12 +158,23 @@ class WeatherData:
         fc = self._from_ensemble(latitude, longitude, tz_name, target_date, kind)
         if fc is None:
             fc = self._from_nws(latitude, longitude, tz_name, target_date, kind)
+        elif self.cross_check:
+            second = self._from_nws(latitude, longitude, tz_name, target_date, kind)
+            if second is not None:
+                fc.cross_check_f = second.mean
+                fc.cross_check_source = second.source
+                fc.cross_check_data_time = second.data_time
+                fc.provenance.extend(second.provenance)
         if fc is None:
             return None
 
         if station:
-            obs = self.observed_extreme_today(station, tz_name, target_date, kind)
+            obs, obs_time, obs_id = self._observed_extreme(
+                station, tz_name, target_date, kind)
             fc.observed_extreme_so_far = obs
+            fc.observation_time = obs_time
+            if obs_id is not None:
+                fc.provenance.append(obs_id)
 
         tz = ZoneInfo(tz_name)
         end_of_day = dt.datetime.combine(target_date, dt.time(23, 59), tzinfo=tz)
@@ -134,13 +197,22 @@ class WeatherData:
             # with no matching date, which reads as "0 usable members".
             "forecast_days": self.forecast_days,
         }
+        src = "open_meteo_ensemble"
+        retrieved_at = dt.datetime.now(dt.timezone.utc)
+        t0 = time.monotonic()
+        status = None
         try:
             r = self._session.get(ENSEMBLE_URL, params=params, timeout=self.timeout)
+            status = r.status_code
             r.raise_for_status()
             payload = r.json()
         except Exception as exc:  # noqa: BLE001
+            self.monitor.record(src, False, status=status,
+                                latency_ms=(time.monotonic() - t0) * 1000,
+                                error=f"{type(exc).__name__}: {exc}")
             log.warning("Open-Meteo ensemble unavailable: %s", exc)
             return None
+        latency_ms = (time.monotonic() - t0) * 1000
 
         blocks = payload if isinstance(payload, list) else [payload]
         members: list[float] = []
@@ -154,6 +226,8 @@ class WeatherData:
             if isinstance(block, dict) and block.get("error"):
                 log.warning("Open-Meteo returned an error: %s",
                             block.get("reason") or block.get("error"))
+                self.monitor.record(src, False, status=status, latency_ms=latency_ms,
+                                    error=str(block.get("reason") or block.get("error")))
                 return None
             hourly = block.get("hourly") or {}
             times = hourly.get("time") or []
@@ -186,8 +260,69 @@ class WeatherData:
                 log.warning("  -> every block came back without %s in it; the "
                             "forecast window is probably too short for a "
                             "market this far out.", target_date)
+            # A 200 carrying no usable forecast is a failed source, not a
+            # healthy one - this is the 18 September failure, counted.
+            self.monitor.record(src, False, status=status, latency_ms=latency_ms,
+                                error=f"unusable: {len(members)} members")
             return None
-        return DailyTempForecast(target_date, kind, members, source="open-meteo-ensemble")
+
+        data_time, vintage = self._model_run_vintage()
+        self.monitor.record(src, True, status=status, latency_ms=latency_ms,
+                            data_time=data_time)
+        fc = DailyTempForecast(target_date, kind, members, source="open-meteo-ensemble",
+                               retrieved_at=retrieved_at, data_time=data_time,
+                               vintage=vintage)
+        mean = sum(members) / len(members)
+        oid = self.monitor.observe(
+            src, data_type=f"forecast_daily_{kind}_f", subject=f"{lat},{lon}",
+            target_date=target_date.isoformat(), value=round(mean, 3),
+            value_json={"members": len(members), "models": self.models,
+                        "spread_f": round(fc.spread, 3),
+                        "min_f": round(min(members), 2), "max_f": round(max(members), 2),
+                        "values_f": [round(m, 1) for m in members]},
+            data_time=data_time.isoformat() if data_time else None,
+            data_vintage=vintage or None,
+            retrieved_at=retrieved_at.isoformat(), latency_ms=round(latency_ms, 1))
+        if oid is not None:
+            fc.provenance.append(oid)
+        return fc
+
+    def _model_run_vintage(self) -> tuple[dt.datetime | None, dict]:
+        """Which model runs Open-Meteo is serving: (oldest release time,
+        {model: run initialisation time}). Cached; a failure returns
+        (None, {}) and never affects the forecast itself."""
+        now = time.monotonic()
+        if self._model_runs and now - self._model_runs[0] < MODEL_RUN_CACHE_SECONDS:
+            return self._model_runs[1]
+        vintage: dict = {}
+        released: list[dt.datetime] = []
+        for model in self.models:
+            meta_name = MODEL_RUN_METADATA.get(model)
+            if not meta_name:
+                continue
+            try:
+                with self.monitor.track("open_meteo_model_runs") as call:
+                    r = self._session.get(MODEL_META_URL.format(model=meta_name),
+                                          timeout=self.timeout)
+                    call.status = r.status_code
+                    r.raise_for_status()
+                    meta = r.json()
+                    if meta.get("error"):
+                        call.ok = False
+                        call.error = str(meta.get("reason") or "error")
+                        continue
+                    init = _epoch_iso(meta.get("last_run_initialisation_time"))
+                    avail = _epoch_iso(meta.get("last_run_availability_time"))
+                    call.data_time = avail
+            except Exception as exc:  # noqa: BLE001
+                log.debug("model run metadata for %s unavailable: %s", model, exc)
+                continue
+            vintage[model] = {"run": init, "released": avail}
+            if avail:
+                released.append(_sources.to_utc(avail))
+        result = (min(released) if released else None, vintage)
+        self._model_runs = (now, result)
+        return result
 
     # ------------------------------------------------------------------
     def _nws_grid(self, lat, lon):
@@ -195,9 +330,11 @@ class WeatherData:
         if key in self._grid_cache:
             return self._grid_cache[key]
         try:
-            r = self._session.get(NWS_POINTS.format(lat=lat, lon=lon), timeout=self.timeout)
-            r.raise_for_status()
-            url = r.json()["properties"]["forecastGridData"]
+            with self.monitor.track("nws_gridpoint") as call:
+                r = self._session.get(NWS_POINTS.format(lat=lat, lon=lon), timeout=self.timeout)
+                call.status = r.status_code
+                r.raise_for_status()
+                url = r.json()["properties"]["forecastGridData"]
         except Exception as exc:  # noqa: BLE001
             log.warning("NWS point lookup failed: %s", exc)
             return None
@@ -209,10 +346,16 @@ class WeatherData:
         if not grid_url:
             return None
         field_name = "maxTemperature" if kind == "high" else "minTemperature"
+        retrieved_at = dt.datetime.now(dt.timezone.utc)
         try:
-            r = self._session.get(grid_url, timeout=self.timeout)
-            r.raise_for_status()
-            values = r.json()["properties"][field_name]["values"]
+            with self.monitor.track("nws_gridpoint") as call:
+                r = self._session.get(grid_url, timeout=self.timeout)
+                call.status = r.status_code
+                r.raise_for_status()
+                props = r.json()["properties"]
+                values = props[field_name]["values"]
+                update_time = props.get("updateTime")
+                call.data_time = update_time
         except Exception as exc:  # noqa: BLE001
             log.warning("NWS gridpoint fetch failed: %s", exc)
             return None
@@ -222,38 +365,79 @@ class WeatherData:
             start = entry["validTime"].split("/")[0].replace("Z", "+00:00")
             when = dt.datetime.fromisoformat(start).astimezone(tz).date()
             if when == target_date:
-                celsius = float(entry["value"])
-                return DailyTempForecast(
-                    target_date, kind, [celsius * 9 / 5 + 32], source="nws-gridpoint"
-                )
+                value_f = float(entry["value"]) * 9 / 5 + 32
+                data_time = _sources.to_utc(update_time)
+                fc = DailyTempForecast(
+                    target_date, kind, [value_f], source="nws-gridpoint",
+                    retrieved_at=retrieved_at, data_time=data_time,
+                    vintage={"nws_gridpoint": {"updated": update_time}})
+                oid = self.monitor.observe(
+                    "nws_gridpoint", endpoint=grid_url,
+                    data_type=f"forecast_daily_{kind}_f", subject=f"{lat},{lon}",
+                    target_date=target_date.isoformat(), value=round(value_f, 2),
+                    value_json={"valid_time": entry["validTime"]},
+                    data_time=update_time, retrieved_at=retrieved_at.isoformat(),
+                    latency_ms=round(call.latency_ms or 0.0, 1))
+                if oid is not None:
+                    fc.provenance.append(oid)
+                return fc
         return None
 
     # ------------------------------------------------------------------
     def observed_extreme_today(self, station: str, tz_name: str,
                                target_date: dt.date, kind: str) -> float | None:
         """Highest/lowest temperature already observed at the station today."""
+        return self._observed_extreme(station, tz_name, target_date, kind)[0]
+
+    def _observed_extreme(self, station: str, tz_name: str, target_date: dt.date,
+                          kind: str) -> tuple[float | None, dt.datetime | None, int | None]:
+        """(extreme so far, time of the newest observation, provenance id)."""
         tz = ZoneInfo(tz_name)
         now_local = dt.datetime.now(tz)
         if now_local.date() != target_date:
-            return None
+            return None, None, None
         start = dt.datetime.combine(target_date, dt.time(0, 0), tzinfo=tz)
+        url = NWS_OBS.format(station=station)
+        retrieved_at = dt.datetime.now(dt.timezone.utc)
         try:
-            r = self._session.get(
-                NWS_OBS.format(station=station),
-                params={"start": start.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
-                timeout=self.timeout,
-            )
-            r.raise_for_status()
-            feats = r.json().get("features", [])
+            with self.monitor.track("nws_observations") as call:
+                r = self._session.get(
+                    url,
+                    params={"start": start.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                    timeout=self.timeout,
+                )
+                call.status = r.status_code
+                r.raise_for_status()
+                feats = r.json().get("features", [])
+                stamps = [((f.get("properties") or {}).get("timestamp")) for f in feats]
+                stamps = [x for x in stamps if x]
+                call.data_time = max(stamps) if stamps else None
         except Exception as exc:  # noqa: BLE001
             log.warning("NWS observations for %s failed: %s", station, exc)
-            return None
+            return None, None, None
 
-        temps = []
+        readings = []           # (deg F, timestamp, qc flag)
         for f in feats:
-            v = ((f.get("properties") or {}).get("temperature") or {}).get("value")
+            props = f.get("properties") or {}
+            temp = props.get("temperature") or {}
+            v = temp.get("value")
             if v is not None:
-                temps.append(float(v) * 9 / 5 + 32)
-        if not temps:
-            return None
-        return max(temps) if kind == "high" else min(temps)
+                readings.append((float(v) * 9 / 5 + 32, props.get("timestamp"),
+                                 temp.get("qualityControl")))
+        if not readings:
+            return None, None, None
+        pick = max if kind == "high" else min
+        extreme = pick(readings, key=lambda x: x[0])
+        latest = max((x[1] for x in readings if x[1]), default=None)
+        qc: dict = {}
+        for _v, _t, flag in readings:
+            qc[str(flag)] = qc.get(str(flag), 0) + 1
+        oid = self.monitor.observe(
+            "nws_observations", endpoint=url,
+            data_type=f"observed_{kind}_so_far_f", subject=station,
+            target_date=target_date.isoformat(), value=round(extreme[0], 2),
+            value_json={"readings": len(readings), "extreme_at": extreme[1],
+                        "extreme_qc": extreme[2], "qc_flags": qc},
+            data_time=latest, retrieved_at=retrieved_at.isoformat(),
+            latency_ms=round(call.latency_ms or 0.0, 1))
+        return extreme[0], _sources.to_utc(latest), oid
