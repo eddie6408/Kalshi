@@ -183,6 +183,17 @@
     <div id="scans"></div>
   </div>
 
+  <h2>Where does the data come from?</h2>
+  <p class="chart-note">Every outside source the bot reads, who publishes it, how
+    authoritative it is (tier 1 = the organisation responsible for the
+    information), and whether it is working. Nothing here blocks a trade yet.</p>
+  <div class="card"><div id="sources"></div></div>
+  <div class="card" style="margin-top:12px">
+    <p class="chart-title">Behind the latest forecast decision</p>
+    <p class="chart-note">The exact numbers the bot had, who published them and when.</p>
+    <div id="behind"></div>
+  </div>
+
   <footer id="foot"></footer>
 </div>
 <div class="tip" id="tip"></div>
@@ -619,6 +630,55 @@ function renderHealth(){
          "forecasts whose market has not resolved");
 }
 
+// ------------------------------------------------------- sources (14A)
+function renderSources(){
+  const rows = DATA.sources || [];
+  const host = document.getElementById("sources");
+  if (!rows.length){ host.innerHTML = '<p class="empty">No source health recorded yet.</p>'; return; }
+  const cls = s => s === "HEALTHY" ? "pos" : (s === "DOWN" ? "neg" : "");
+  const when = ts => ts ? esc(String(ts).replace("T"," ").slice(0,19)) : "&mdash;";
+  const settle = {};
+  (DATA.settlement || []).forEach(x => { (settle[x.name] = settle[x.name] || []).push(x.series); });
+  host.innerHTML = `<table><thead><tr>
+      <th>Source</th><th>Publisher</th><th class="num">Tier</th><th>State</th>
+      <th class="num">Calls</th><th class="num">Errors</th><th>Newest data</th><th>Last error</th>
+    </tr></thead><tbody>${rows.map(r => `<tr>
+      <td class="t">${esc(r.source_id)}</td>
+      <td>${esc(r.publisher || "")}</td>
+      <td class="num">${r.tier ?? "&mdash;"}</td>
+      <td class="${cls(r.state)}"><b>${esc(r.state)}</b>${r.detail ? `<br><span class="sub">${esc(r.detail)}</span>` : ""}</td>
+      <td class="num">${r.calls ?? 0}</td>
+      <td class="num">${Math.round((r.error_rate || 0) * 100)}%</td>
+      <td>${when(r.last_data_time)}</td>
+      <td class="sub">${esc((r.last_error || "").slice(0, 80))}</td></tr>`).join("")}</tbody></table>` +
+    (Object.keys(settle).length ? `<p class="chart-note" style="margin:12px 0 0">
+      <b>Settlement, according to Kalshi:</b> ${Object.entries(settle).map(([n, ss]) =>
+        `${esc(n)} (${ss.map(esc).join(", ")})`).join("; ")}.
+      The bot reads the NWS Daily Climate Report those values come from.</p>` : "");
+}
+
+function renderBehind(){
+  const b = DATA.behind_latest;
+  const host = document.getElementById("behind");
+  if (!b){ host.innerHTML = '<p class="empty">No forecast decision with provenance yet.</p>'; return; }
+  const mins = s => s == null ? "&mdash;" : (s < 5400 ? `${Math.round(s/60)} min` : `${(s/3600).toFixed(1)} h`);
+  host.innerHTML = `<p class="chart-note" style="margin:0 0 10px">
+      <b>${esc(b.tickers)}</b> &middot; ${esc(b.decision)} at ${esc(b.ts)} UTC
+      &middot; P(yes) ${b.probability != null ? (b.probability*100).toFixed(1)+"%" : "&mdash;"}
+      &middot; forecast age ${mins(b.forecast_age_seconds)}
+      &middot; observation age ${mins(b.observation_age_seconds)}
+      ${b.cross_check_diff_f != null ? `&middot; ensemble minus NWS ${b.cross_check_diff_f > 0 ? "+" : ""}${b.cross_check_diff_f}&deg;F` : ""}</p>
+    <table><thead><tr><th>#</th><th>Source</th><th>Publisher</th><th>What</th>
+      <th class="num">Value</th><th>Published</th><th>Retrieved</th></tr></thead>
+    <tbody>${(b.rows || []).map(r => `<tr>
+      <td>${r.id}</td><td class="t">${esc(r.source_id)}</td>
+      <td>${esc(r.publisher || "")} <span class="sub">tier ${r.tier ?? "?"}</span></td>
+      <td>${esc(r.data_type || "")} <span class="sub">${esc(r.subject || "")} ${esc(r.target_date || "")}</span></td>
+      <td class="num">${r.value != null ? Number(r.value).toFixed(1) : "&mdash;"}</td>
+      <td>${esc(String(r.data_time || "").replace("T"," ").slice(0,19)) || "&mdash;"}</td>
+      <td>${esc(String(r.retrieved_at || "").replace("T"," ").slice(0,19))}</td></tr>`).join("")}</tbody></table>`;
+}
+
 function renderScans(){
   const rows = DATA.scans || [];
   const host = document.getElementById("scans");
@@ -692,6 +752,7 @@ document.getElementById("stamp").textContent =
 renderRegime(); renderTiles(); renderReliability(); renderSeries();
 renderLead(); renderBias();
 renderRejects(); renderMoney(); renderOpen(); renderHealth(); renderScans();
+renderSources(); renderBehind();
 document.getElementById("foot").innerHTML =
   `Rebuild with <b>DASHBOARD.command</b>, or <code>python scripts/dashboard.py</code>.
    The journal is opened read-only and immutable, so this is safe to run while the

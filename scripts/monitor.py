@@ -107,6 +107,32 @@ def render(conn, db: Path, rows: int) -> str:
             out.append(f"  {R}{B}  {e['exposed']} trade(s) left unhedged - "
                        f"MANUAL REVIEW{X}")
 
+    # ---------------- sources (package 14A) ----------------
+    # Where the outside information comes from and whether it is working.
+    # Written by the bot every heartbeat; blank on a journal from before 14A.
+    if _table(conn, "source_health"):
+        srcs = conn.execute(
+            "SELECT * FROM source_health ORDER BY tier, source_id").fetchall()
+        if srcs:
+            colour = {"HEALTHY": G, "DEGRADED": Y, "DOWN": R}
+            out.append("")
+            out.append(f"  {B}SOURCES{X}  {D}updated {_ago(srcs[0]['updated_at'])} ago{X}")
+            line = "    "
+            for r in srcs:
+                cell = (f"{colour.get(r['state'], D)}{r['source_id']} "
+                        f"{r['state']}{X}   ")
+                if len(line) + len(r["source_id"]) + len(r["state"]) > w + 20:
+                    out.append(line.rstrip())
+                    line = "    "
+                line += cell
+            out.append(line.rstrip())
+            for r in srcs:
+                if r["state"] in ("DEGRADED", "DOWN"):
+                    out.append(f"{D}      {r['source_id']}: {r['consecutive_failures']} "
+                               f"failing in a row, error rate "
+                               f"{(r['error_rate'] or 0) * 100:.0f}%, last error "
+                               f"{(r['last_error'] or '-')[:70]}{X}")
+
     # ---------------- opportunities ----------------
     if _table(conn, "opportunities"):
         out.append("")

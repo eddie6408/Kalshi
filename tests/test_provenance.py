@@ -337,3 +337,33 @@ def test_a_changed_settlement_source_is_reported():
             "KXHIGHNY", [{"name": "Someone Else", "url": "https://x"}])
         assert added == [("Someone Else", "https://x")]
         assert dropped == [("The Weather Company", "https://weather.com/kalshi")]
+
+
+# ------------------------------------------------------------- dashboard
+def test_the_dashboard_shows_sources_and_what_was_behind_a_decision():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import sqlite3
+    import dashboard
+    with tempfile.TemporaryDirectory() as tmp:
+        # A journal from before 14A: the section is empty, not an error.
+        old = Path(tmp) / "old.db"
+        sqlite3.connect(old).execute("CREATE TABLE runs (id INTEGER)").connection.commit()
+        conn = sqlite3.connect(old)
+        conn.row_factory = sqlite3.Row
+        assert dashboard._sources(conn) == {"sources": [], "settlement": [],
+                                            "behind_latest": None}
+
+        j = Journal(Path(tmp) / "j.db")
+        mon = SourceMonitor()
+        mon.set_sink(j.log_source_observation)
+        mon.record("nws_observations", True)
+        a = mon.observe("nws_observations", value=71.0, data_type="observed_high_so_far_f")
+        j.save_source_health(mon.snapshot())
+        j.conn.execute(
+            "INSERT INTO opportunities (ts, strategy, tickers, decision, evidence) "
+            "VALUES ('t', 'forecast:weather_temperature', 'KXHIGHNY-X', 'REJECT', ?)",
+            (json.dumps({"provenance_ids": [a], "probability_yes": 0.4}),))
+        j.conn.commit()
+        got = dashboard._sources(j.conn)
+        assert got["sources"][0]["state"] == HEALTHY
+        assert [r["id"] for r in got["behind_latest"]["rows"]] == [a]

@@ -314,7 +314,52 @@ def gather(conn) -> dict:
                    "traded": int(x["traded"] or 0),
                    "seconds": float(x["seconds"] or 0)}
                   for x in q(conn, "SELECT * FROM scans ORDER BY id DESC LIMIT 40")][::-1]
+    d.update(_sources(conn))
     return d
+
+
+def _sources(conn) -> dict:
+    """Package 14A: where the outside information comes from, whether it is
+    working, and the exact source rows behind the latest forecast decision.
+    Empty on a journal from before 14A."""
+    out: dict = {"sources": [], "settlement": [], "behind_latest": None}
+    try:
+        out["sources"] = [dict(x) for x in q(
+            conn, "SELECT * FROM source_health ORDER BY tier, source_id")]
+        out["settlement"] = [dict(x) for x in q(
+            conn, "SELECT series, name, url, first_seen, last_seen "
+                  "FROM settlement_sources ORDER BY series")]
+        latest = one(conn, """SELECT id, ts, tickers, decision, evidence
+                              FROM opportunities
+                              WHERE strategy LIKE 'forecast%'
+                                AND evidence LIKE '%provenance_ids%'
+                              ORDER BY id DESC LIMIT 1""")
+    except sqlite3.Error:
+        return out
+    if latest:
+        try:
+            ev = json.loads(latest["evidence"] or "{}")
+        except ValueError:
+            ev = {}
+        ids = [int(i) for i in (ev.get("provenance_ids") or [])][:20]
+        rows = []
+        if ids:
+            marks = ",".join("?" for _ in ids)
+            rows = [dict(x) for x in q(
+                conn, f"""SELECT id, source_id, publisher, tier, data_type, subject,
+                                 target_date, value, data_time, data_vintage,
+                                 retrieved_at, endpoint
+                          FROM source_observations WHERE id IN ({marks})
+                          ORDER BY id""", *ids)]
+        out["behind_latest"] = {
+            "ts": (latest["ts"] or "")[:19], "tickers": latest["tickers"],
+            "decision": latest["decision"],
+            "probability": ev.get("probability_yes"),
+            "forecast_age_seconds": ev.get("forecast_age_seconds"),
+            "observation_age_seconds": ev.get("observation_age_seconds"),
+            "cross_check_diff_f": ev.get("cross_check_diff_f"),
+            "rows": rows}
+    return out
 
 
 # ----------------------------------------------------------------------
