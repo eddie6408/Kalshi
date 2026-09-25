@@ -1,0 +1,771 @@
+# =====================================================================
+#  kalshibot configuration
+#  Everything the bot is allowed to do is controlled from this file.
+#  Secrets live in .env, NOT here.
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# 1. EXECUTION MODE  --  the single most important setting in this file
+# ---------------------------------------------------------------------
+#   paper : bot reads REAL Kalshi prices but never sends an order.
+#           Fills are simulated. Zero money at risk. <-- START HERE
+#   demo  : bot sends real orders to Kalshi's sandbox (fake money).
+#   live  : bot sends real orders with REAL money.
+#
+# To go live you must change BOTH this value AND set
+# safety.i_understand_this_trades_real_money to true.
+execution:
+  mode: demo
+  # Simulated-fill assumption in paper mode: "cross" = assume we pay the
+  # best ask (pessimistic, realistic). "mid" = assume midpoint (optimistic).
+  paper_fill_model: cross
+
+  # Where the ORDER BOOK comes from in paper mode: "demo" or "live".
+  #
+  # Demo books are synthetic. Every fill-quality number this bot has measured
+  # - spread, depth, whether 25 contracts move the price - was measured
+  # against a fiction. The forecast edge is real and measured; the execution
+  # cost on real books is unknown, and that gap is the difference between a
+  # good forecast and a profitable trade.
+  #
+  # "live" reads PRODUCTION market data, which Kalshi publishes without
+  # authentication: no API key, no signature, no account, nothing to leak.
+  # GET only, and the path allowlist in env_guard refuses anything touching a
+  # portfolio, order, fill or balance.
+  #
+  # It may ONLY be used with mode: paper. The bot refuses to start otherwise,
+  # because pricing against production depth while trading somewhere else
+  # would produce numbers that look right and describe a different market.
+  #
+  # When production does not list a market, the book comes back EMPTY rather
+  # than falling back to demo - a fallback would put the fiction back into the
+  # measurement. Those misses are counted and reported.
+  paper_book_source: demo
+
+  # --- multi-leg order execution -------------------------------------
+  max_partial_fill_time_seconds: 8
+  fill_poll_seconds: 0.6
+  attempt_unwind_on_partial: true
+  # If one leg fills and the hedge never lands, this is the largest naked
+  # directional position you are willing to be left holding. ENFORCED before
+  # the first order goes out: a structure whose worst-case partial fill would
+  # exceed this is refused. Keep it in step with max_contracts_per_trade -
+  # 25 contracts can cost up to $25, so a lower number here silently blocks
+  # every full-size trade. Set to 0 to disable the check.
+  max_unhedged_exposure_usd: 25.0
+  reprice_before_send: true
+  # The positions endpoint lags a fill by a second or two; reading it at once
+  # reported a mismatch on a trade that had actually filled.
+  reconcile_attempts: 4
+  reconcile_backoff_seconds: 1.5
+
+safety:
+  i_understand_this_trades_real_money: false
+  # Bot refuses to start if the account balance is below this (dollars).
+  min_account_balance_usd: 50.0
+  # Hard stop: if realized+unrealized P/L for the day drops below this,
+  # the bot cancels everything and shuts down until you restart it.
+  daily_loss_limit_usd: 40.0
+  # Hard stop: consecutive losing trades before the bot pauses itself.
+  #
+  # Tune this to the strategy. A book of cheap long-shot contracts (buying
+  # 15c buckets) loses small most of the time and wins big occasionally, so
+  # five losses in a row is routine rather than a warning. Set it too low and
+  # the breaker fires constantly on a strategy that is working. The daily
+  # loss limit above is the one that actually protects your money; this one
+  # is about noticing that the model has broken.
+  max_consecutive_losses: 8
+
+# ---------------------------------------------------------------------
+# 2. RISK LIMITS  --  enforced by deterministic code, not by judgment
+# ---------------------------------------------------------------------
+risk:
+  bankroll_usd: 1000.0          # what you consider "the trading account"
+  max_cost_per_trade_usd: 50.0  # most dollars a single order may cost
+  max_exposure_per_market_usd: 250.0
+  max_total_open_exposure_usd: 1000.0
+  max_fraction_of_bankroll_at_risk: 0.02   # 2%
+  max_open_positions: 10
+  max_orders_per_hour: 20
+  # Kelly sizing: we bet a FRACTION of full Kelly. 0.25 = quarter Kelly.
+  # Full Kelly (1.0) is far too aggressive for a bot with model error.
+  kelly_fraction: 0.25
+  # Never add to a losing position.
+  allow_averaging_down: false
+
+# ---------------------------------------------------------------------
+# 3. EDGE / ENTRY RULES
+# ---------------------------------------------------------------------
+edge:
+  # Minimum gap between our probability and the market's implied
+  # probability, AFTER fees, before we will trade. 0.05 = 5 points.
+  min_edge_after_fees: 0.05
+  # Estimator must be at least this confident (0-1) to act.
+  min_confidence: 0.60
+  # Skip markets priced at the extremes - fees and model error dominate.
+  min_price_cents: 5
+  max_price_cents: 95
+  # Liquidity gates.
+  min_resting_contracts_at_our_price: 25
+  max_spread_cents: 4
+  # Wait this long before adding to a market we already bought. Without it
+  # the bot re-buys the same contract on every scan and pays fees each time.
+  min_minutes_between_entries_same_market: 60
+  # Don't trade a market that settles sooner than this (minutes).
+  min_minutes_to_close: 45
+  # Don't trade a market further out than this (hours) - forecasts too vague.
+  max_hours_to_close: 60
+
+# ---------------------------------------------------------------------
+# 4. EXIT RULES  --  managing what we already hold
+# ---------------------------------------------------------------------
+# RETIRED 2026-09-17 - read only by kalshibot/sim_engine.py (the offline
+# simulator). The live exit rules are the `positions:` block above, enforced by
+# the position worker. Changing anything here will not change how the bot
+# trades.
+exit:
+  # Close if our estimated edge has decayed below this.
+  exit_when_edge_below: 0.01
+  # Close if the position has lost this fraction of its cost.
+  stop_loss_fraction: 0.50
+  # Take profit when the market has moved to within this much of our fair value.
+  take_profit_edge_remaining: 0.015
+  # Always flatten this many minutes before settlement (avoid settlement risk).
+  flatten_minutes_before_close: 20
+
+# ---------------------------------------------------------------------
+# 5. FEES  --  verify these against Kalshi's current fee schedule
+# ---------------------------------------------------------------------
+fees:
+  taker_rate: 0.07      # fee = ceil_to_cent(rate * contracts * P * (1-P))
+  maker_rate: 0.0025    # fee = ceil_to_cent(rate * contracts * P)
+  assume_taker: true    # be pessimistic: price every trade as a taker
+  safety_multiplier: 1.10   # pad fee estimates by 10%
+
+# ---------------------------------------------------------------------
+# 6. STRATEGY: WEATHER
+# ---------------------------------------------------------------------
+# DEAD as of 2026-09-17. This named the single estimator the retired engine ran.
+# The live path runs every estimator listed under `forecast.estimators`.
+# Kept only so an old config does not fail to load.
+strategy:
+  name: weather_temperature
+
+weather:
+  # Kalshi daily high/low temperature series. Ticker prefixes are verified
+  # at runtime against /markets, so a wrong guess here is harmless -
+  # it just finds nothing.
+  series:
+    - ticker_prefix: KXHIGHNY
+      label: "NYC daily high"
+      station: KNYC
+      latitude: 40.7789
+      longitude: -73.9692
+      kind: high
+      timezone: America/New_York
+    - ticker_prefix: KXHIGHCHI
+      # Kalshi settles Chicago on CLIMDW - Chicago MIDWAY, not O'Hare. This
+      # pointed at KORD (41.98, -87.91), ~20 miles northwest, and the two
+      # airports routinely differ by a degree or three. Every Chicago
+      # probability was being computed for the wrong airport.
+      label: "Chicago Midway daily high"
+      station: KMDW
+      latitude: 41.7868
+      longitude: -87.7522
+      kind: high
+      timezone: America/Chicago
+    - ticker_prefix: KXHIGHDEN
+      label: "Denver daily high"
+      station: KDEN
+      latitude: 39.8467
+      longitude: -104.6562
+      kind: high
+      timezone: America/Denver
+    - ticker_prefix: KXHIGHAUS
+      label: "Austin daily high"
+      station: KAUS
+      latitude: 30.1830
+      longitude: -97.6799
+      kind: high
+      timezone: America/Chicago
+    - ticker_prefix: KXHIGHMIA
+      label: "Miami daily high"
+      station: KMIA
+      latitude: 25.7906
+      longitude: -80.3164
+      kind: high
+      timezone: America/New_York
+    - ticker_prefix: KXHIGHLAX
+      label: "Los Angeles daily high"
+      station: KLAX
+      latitude: 33.9382
+      longitude: -118.3866
+      kind: high
+      timezone: America/Los_Angeles
+
+  # Ensemble models pulled from Open-Meteo (free, no API key).
+  ensemble_models:
+    - gfs_seamless
+    - icon_seamless
+    - ecmwf_ifs025
+
+  # Extra uncertainty (deg F) added on top of the raw ensemble spread to
+  # account for model bias and the fact that the ensemble grid point is not
+  # literally the settlement thermometer. Tuned later from your own journal.
+  station_representativeness_sigma_f: 1.6
+
+  # Floor on total sigma so we never claim absurd precision.
+  min_sigma_f: 1.0
+  # Kalshi settles from The Weather Company; we observe via NWS
+  # api.weather.gov. Same station, different provider, so an already-observed
+  # high is close to the settling value but not identical. This much slack in
+  # degrees F before the bot treats an outcome as ruled out - without it, a
+  # near-boundary observation produces false certainty, which is the most
+  # expensive kind of wrong.
+  observation_margin_f: 0.5
+
+  # If the ensemble is unavailable, fall back to the NWS point forecast
+  # with these lead-time sigmas (hours_ahead -> sigma in deg F).
+  fallback_sigma_by_lead_hours:
+    6: 1.6
+    12: 2.2
+    24: 2.8
+    36: 3.4
+    48: 4.0
+    72: 5.0
+
+# ---------------------------------------------------------------------
+# 7. LOOP / SCHEDULING
+# ---------------------------------------------------------------------
+# RETIRED 2026-09-17 except `loop.forecast_cache_seconds`, which the estimator
+# registry still reads. The live loop timings are `arb_loop:` and `positions:`.
+loop:
+  scan_interval_seconds: 300      # how often to look for new opportunities
+  manage_interval_seconds: 60     # how often to re-check open positions
+  forecast_cache_seconds: 1800    # don't re-pull the same forecast constantly
+  # Bot sleeps outside these UTC hours (0-23). Empty list = always on.
+  active_utc_hours: []
+
+# ---------------------------------------------------------------------
+# 8. LOGGING & JOURNAL
+# ---------------------------------------------------------------------
+journal:
+  database_path: data/journal.db
+logging:
+  level: INFO
+  file: logs/kalshibot.log
+
+# =====================================================================
+#  STRUCTURAL ARBITRAGE  (rendition 2)
+#  Everything below drives arb.py. The weather settings above still drive
+#  the older run.py loop.
+# =====================================================================
+
+# Which markets to look at. No series filter = the whole exchange.
+discovery:
+  min_minutes_to_close: 30
+  max_hours_to_close: 336        # 14 days
+  # Leave FALSE. Kalshi's /markets list endpoint often reports 0/0 for
+  # bid/ask even when the order book is fine, so filtering on it here hides
+  # most of the exchange. Liquidity is judged from the real order book.
+  require_quotes: false
+  # Cap on how many order books to pull per scan (each costs an API call).
+  max_orderbook_fetches: 1500
+  orderbook_workers: 8
+  # Cap order books pulled from any ONE event. Without this a single huge
+  # event absorbs the entire budget - a live scan spent all 1,500 fetches on
+  # four events and found nothing.
+  max_books_per_event: 12
+  # DISABLED (0). Measured on the live demo exchange: volume and open
+  # interest come back as 0 for 100% of markets, same as bid/ask. There is
+  # no cheap pre-filter available - every order book has to be fetched to
+  # find out whether anyone is quoting. Only turn this on if a market audit
+  # shows a non-zero "have traded volume or open interest" figure.
+  min_event_activity: 0
+  # With no pre-filter, spread the budget WIDE instead of deep. One series
+  # cannot consume more than this many order book fetches per scan, which
+  # guarantees broad coverage and lets the liquidity profile learn fast.
+  max_books_per_series: 60
+  # Hold back this share of the order book budget for series we have never
+  # sampled, so the scan keeps discovering instead of only re-checking
+  # yesterday's winners. The rest goes to series with a confirmed book.
+  #
+  # Lowered 0.25 -> 0.10 on 2026-09-14. With 70 proven series the profile has
+  # largely converged, and ~47% of each scan's books were coming back empty
+  # (dollars-empty 705 of 1500). Spending 90% on series known to have books
+  # roughly doubles useful coverage at no extra scan time. Raise it again if
+  # the exchange adds series and the profile needs to re-learn.
+  explore_fraction: 0.10
+  max_events: 0                  # 0 = no cap
+  max_market_pages: 400
+  series_filter: []              # e.g. ["KXHIGH", "KXBTC"] to narrow the scan
+
+arbitrage:
+  max_legs: 14
+  # "At most one wins" does not mean "one must win", so buying YES on every
+  # outcome is NOT risk-free. Leave this false.
+  allow_yes_basket: false
+  # Only build baskets when Kalshi itself says the event is mutually
+  # exclusive. Never inferred from ticker names.
+  require_exclusive_flag: true
+  # Raised to 25 on 2026-09-14 to exercise the DEMO order path. At 1 contract
+  # Kalshi's per-leg fee rounds up to a whole cent and eats ~75% of a typical
+  # 4c edge; at 25 the same structure drags ~50% and can clear the gate.
+  max_contracts_per_trade: 25
+  min_net_edge_per_contract: 0.005
+  safety_buffer_usd: 0.0
+  ladder_close_tolerance_minutes: 5
+  # The quantity analyser maximises net edge, which always wants the whole
+  # book - and that is the size with the worst execution risk, since risk is
+  # graded on depth headroom. Left alone it proposes trades the gate must
+  # refuse. This steps the size down to the largest profitable quantity the
+  # gate will actually accept. Keep max_execution_risk in step with
+  # profitability.max_execution_risk below.
+  respect_execution_risk: true
+  max_execution_risk: medium
+
+# Forecast strategies: edges that come from an OPINION about the world rather
+# than from the contracts themselves. This is the half of the brief that asks
+# "what is the true probability, and how does it compare with Kalshi's price?"
+#
+# Nothing here is ever guaranteed. A forecast can be wrong, so these trades are
+# sized small, judged on expected value, and can be turned off in one line.
+forecast:
+  # Master switch. Off means the bot is a structural-arbitrage scanner only.
+  enabled: false
+  # Which estimators to run. Names must exist in kalshibot/estimators/registry.py.
+  estimators:
+    - weather_temperature
+  # Fraction of full Kelly. Quarter-Kelly is the standard "I do not fully
+  # trust my own model" setting. Raise it only after the calibration report
+  # says the estimates are actually well calibrated.
+  kelly_fraction: 0.25
+  max_contracts_per_trade: 25
+  # Never put more than this share of the bankroll into one forecast trade.
+  max_bankroll_fraction: 0.02
+  # An estimate has to beat the market by at least this many probability
+  # points BEFORE fees. The brief asks for 5%.
+  min_probability_edge: 0.05
+  min_confidence: 0.50
+  # Do not trade a market further from settlement than this.
+  #
+  # The 21 September audit measured Brier Skill Score against climatology by
+  # how far ahead the forecast was made:
+  #
+  # with a 95% interval bootstrapped over CONTRACTS, not rows (452 rows are
+  # only 74 distinct contracts):
+  #
+  #      0-6h    n=155  BSS +0.350  95% [+0.141, +0.476]  <- real skill
+  #      6-12h   n= 53  BSS +0.005  95% [-0.248, +0.129]
+  #     12-24h   n=209  BSS -0.010  95% [-0.192, +0.098]
+  #      ALL     n=452  BSS +0.110  95% [-0.018, +0.198]
+  #
+  # Only the 0-6h interval excludes zero. Past six hours the forecast is not
+  # measurably better than a climate table, and zero edge is not break-even:
+  # Kalshi's 0.07*n*P*(1-P) per leg makes trading no edge a slow guaranteed
+  # loss. Uncertainty is flat across the buckets (0.164 / 0.175 / 0.192), so
+  # the skill genuinely collapses rather than the question getting easier.
+  #
+  # This gates TRADING only. The estimator still prices and logs long-lead
+  # markets, so the record keeps growing; raise this when the 6-12h interval
+  # excludes zero on its own evidence, not before.
+  #
+  # discovery.max_hours_to_close is 336 (two weeks), so without this line the
+  # bot will price and act on a market a fortnight out. 0 disables the check.
+  max_lead_hours: 6
+  # Refuse to trade on the fallback data source. When the Open-Meteo ensemble
+  # is unavailable the bot falls back to a single NWS gridpoint number, and
+  # the estimator invents a spread for it from lead time. That invented spread
+  # then flows into the edge, the size and the Brier score exactly as if it
+  # had been measured across thirty members.
+  #
+  # On 18 September the ensemble came back unusable five times in one day and
+  # nothing downstream knew. Now those markets are skipped and say so.
+  require_primary_source: true
+  # Refuse markets too thin to get back out of.
+  min_book_depth: 10
+  # The widest bid/ask we will cross. A book quoting 14c bid against an 83c
+  # ask is not a market - buying the ask there is an instant 69-cent paper
+  # loss before being right or wrong about anything. That is precisely what
+  # happened on 19 September: bought NO at 83c, marked at the 14c bid,
+  # stopped out THIRTEEN SECONDS later for -$8.24, five times over. One
+  # market lost $24 while every other trade that day was net positive.
+  max_spread_cents: 15
+  # Stay out of the tails. The bot bought 25 contracts of "Miami 94F or above"
+  # at 2c because it put 9.5% on a 2% market - only 7.5 points, so the points
+  # cap allowed it, but 4.75x what the market said. Out there the model is
+  # mostly its own sigma assumption; the market has real money behind its.
+  # (The original engine.py config had this guard; the unified strategy lost it.)
+  min_price_cents: 5
+  max_price_cents: 95
+  # Disagreement capped by RATIO as well as by points.
+  max_relative_disagreement: 2.5
+  # A contract cap is not a risk limit: 25 contracts is $0.50 at 2c and $24.75
+  # at 99c. This caps the money.
+  max_cost_per_trade_usd: 25.0
+  # The largest disagreement with the market we will act on, at FULL
+  # confidence, in probability points. The allowance is SCALED BY the
+  # estimator's own confidence: at 0.56 confidence this 0.25 becomes a
+  # 14-point allowance.
+  #
+  # Why: the first live forecast scan proposed a +212% trade from a 30-point
+  # "mispricing" at 56% confidence. The distribution behind it contradicted
+  # itself. A gap that large is nearly always a broken model, not a broken
+  # market.
+  max_probability_edge: 0.25
+  # Refuse an entire event whose probabilities contradict each other -
+  # P(>=82) can never exceed P(81 to 82). See kalshibot/coherence.py.
+  require_coherent_distribution: true
+
+# The single gate. Nothing reaches the exchange without passing all of it.
+profitability:
+  min_net_edge_usd: 0.02
+  min_net_edge_cents_per_contract: 0.5
+  min_net_edge_percent: 0.25
+  min_profit_per_trade_usd: 0.02
+  max_fee_drag_percent: 80.0
+  max_legs: 14
+  max_execution_risk: medium     # none | low | medium | high
+  max_opportunity_age_seconds: 20
+  require_guaranteed: true       # structural trades only, for now
+  # A 'guaranteed' structure claiming more than this is treated as a
+  # modelling error, not an opportunity, and refused. Set to 0 to disable.
+  max_guaranteed_return_percent: 100.0
+
+  # --- forecast-derived edges ---------------------------------------
+  # BOTH of these must be set before an opinion-based trade can execute:
+  # allow_forecast true AND require_guaranteed false. Two switches, on
+  # purpose, so neither can be flipped by accident.
+  allow_forecast: false
+  min_probability_edge: 0.05
+  min_confidence: 0.50
+  min_ev_usd: 0.05
+
+limits:
+  max_total_exposure_usd: 100.0
+  # A 25-set structure costs up to $25.00, so the per-event limit needs
+  # headroom above that or every full-size trade is refused at the boundary.
+  max_event_exposure_usd: 30.0
+  # THE money limit for one market, counting what is already held plus
+  # anything bought earlier in the same pass. Until 18 September this was
+  # parsed and never read by anything - which is why the bot bought Denver T82
+  # twice in twenty minutes and nothing objected. Dead config is not a limit.
+  #
+  # Note it is $25 here, not the $250 under `risk:` - that one belongs to the
+  # retired engine and only the simulator reads it now. THIS is the enforced
+  # number.
+  max_market_exposure_usd: 25.0
+  max_contracts_per_trade: 25
+  max_legs_per_trade: 14
+  max_trades_per_scan: 1
+  max_trades_per_hour: 10
+  # Buying more of something we already hold, on the same side. Off: one bite
+  # per market per side. The per-market cap above would NOT have stopped the
+  # Denver double-buy on its own - two 14@63c fills is $17.64, still inside
+  # $25 - so this is the rule that actually does it.
+  allow_averaging_in: false
+  # How long to stay out of a market we have just left. The forecast does not
+  # change because a position closed, so without this the bot re-buys what it
+  # just sold and pays the spread again. On 19 September it bought
+  # KXHIGHCHI-26SEP19-T72 back four times.
+  reentry_cooldown_minutes: 120
+
+# Managing what the bot already owns. This worker runs CONCURRENTLY with the
+# scan, on its own much faster clock, because a position needs looking at far
+# more often than the exchange needs sweeping - and needs only the tickers we
+# hold to do it.
+#
+# Exits are deliberately NOT routed through the profitability gate. A gate that
+# can refuse an exit is a gate that traps you in a losing position.
+positions:
+  review_interval_seconds: 30
+  # Hold only while our probability beats the price we could sell at by this
+  # much. Below it there is nothing left to wait for.
+  min_remaining_edge_cents: 2.0
+  # How far our probability has to fall below the entry price before the thesis
+  # is called dead, in probability points.
+  thesis_shift: 0.08
+  # Close out this long before settlement. Books thin out near the end and a
+  # position you cannot leave is one you have to be right about.
+  close_within_minutes: 45
+  # Give up on a position down this share of what it cost.
+  stop_loss_fraction: 0.50
+  # A stop may not fire until a position has been held this long, and it marks
+  # at the MID rather than the bid. Nothing is learned in the first minute of a
+  # trade; what moves in that window is the book, not the world - and marking
+  # to the bid books the whole spread as a loss the instant the order fills.
+  # On 19 September that produced a stop-out THIRTEEN SECONDS after entry.
+  min_hold_minutes_before_stop: 20
+  # Exit when the estimator can no longer price the market. Holding a forecast
+  # position with no forecast is hoping, not holding a view.
+  exit_when_blind: true
+  min_exit_price_cents: 1
+  # How often to repeat the warning about a position nobody is bidding on.
+  # At a 30s review interval the old behaviour printed the same line 120 times
+  # an hour, which is not a warning, it is wallpaper. A position in a market
+  # that has CLOSED is not reported here at all - it is awaiting settlement,
+  # which is a different state with no decision left in it.
+  stuck_warn_every_minutes: 30
+
+  # Never sell more than we can prove we hold.
+  #
+  # A sell order with no position open does not fail on Kalshi and does not do
+  # nothing. It OPENS the opposite position. Between 19 and 20 September that
+  # happened five times: the bot exited a market, /portfolio/positions still
+  # reported the pre-trade quantity on the next review thirty seconds later,
+  # the bot sold again, and each of those sales opened a short it never meant
+  # to hold. Four were still open days later, on markets that had settled.
+  #
+  #   09-19 13:43  KXHIGHCHI-26SEP19-T72  sold 11 NO while flat
+  #   09-19 22:14  KXHIGHCHI-26SEP19-T72  sold 11 NO while flat
+  #   09-20 01:15  KXHIGHMIA-26SEP19-B88.5  sold 7, then 4, then 1, while flat
+  #   09-20 05:17  KXHIGHAUS-26SEP19-B96.5  sold 13 NO while flat
+  #
+  # With this on, the quantity sold is the smaller of what the exchange
+  # reports and what our own fill record says is left. Our record is written
+  # the moment an order is accepted, so it is never the stale one; if it has
+  # never seen the market it abstains rather than vetoing, so a position
+  # opened by hand can still be exited.
+  #
+  # Turning this off restores the behaviour that created the shorts.
+  reduce_only: true
+
+  # ---- Partial reduction: "should I reduce exposure?" ----
+  #
+  # An exit is all-or-nothing, and that is too blunt. A position can still be
+  # on the right side while being TOO BIG for the edge that is left. The test
+  # is the same one the entry path applies: would the bot open this position,
+  # at this size, at today's price? If the answer is "yes, but smaller", the
+  # difference is exposure carried for no reason.
+  #
+  # Two rules keep this honest:
+  #   * Reduction is considered ONLY where every exit rule has declined to
+  #     fire. A trim can never turn an exit into a hold.
+  #   * A trim can never close a position. Closing belongs to the exit rules.
+  reduce_enabled: true
+  # Fees round UP to the cent per leg, so a 3-contract trim can cost more in
+  # fees than the risk it removes. Floors, in contracts and in money.
+  min_reduce_contracts: 5
+  min_reduce_value_usd: 2.00
+  # Never trim below this. If a position should be this small, it should
+  # probably be closed - and that is the exit rules' decision, not this one.
+  min_hold_contracts: 5
+  # Reviews run every 30s. Without a cooldown a slowly decaying edge would be
+  # trimmed on every cycle: death by a thousand fees.
+  reduce_cooldown_minutes: 60
+  # Sizing inputs. Left blank these fall back to risk.bankroll_usd and
+  # forecast.kelly_fraction, so held positions are judged against the same
+  # numbers new ones are - not a second set that can drift apart.
+  # bankroll_usd:
+  # kelly_fraction:
+
+# Calibration as PERMISSION, not as a report.
+#
+#     "A strategy should have to earn the right to trade."
+#
+# Every forecast the bot makes is written to probability_log with the price at
+# the time. When the market resolves, the forecast is scored (Brier) against
+# what actually happened. A strategy whose forecasts are measurably WORSE than
+# simply predicting the base rate loses the right to open new positions.
+#
+# It never loses the right to close them. That rule is in calibration_gate.py
+# as an explicit method, not as an absence.
+#
+# The posture here is lenient: full size from the start, suspended only once
+# the data says so. That is only defensible because the coherence check, the
+# 5-95c band, the disagreement caps and the position worker already stand in
+# front of it. The gate is the backstop, not the first line.
+calibration:
+  enabled: true
+  # Nothing can be suspended on fewer settled forecasts than this. With no
+  # reduced-size phase in front of it, a suspension fired by noise just looks
+  # like a broken bot. Weather markets settle daily, so 30 is roughly a month
+  # of one city or a week of six.
+  min_sample: 30
+  # ...and this many DISTINCT CONTRACTS before it can be called CALIBRATED.
+  #
+  # Rows are not evidence. The same contract is re-priced about six times a
+  # day, so 452 settled rows were 74 independent things, and bootstrapping
+  # over contracts put the skill interval at [-0.018, +0.198] - across zero.
+  # Counting rows had this gate reporting "CALIBRATED over 1,605 forecasts"
+  # while the dashboard, counting contracts, said there was not yet enough to
+  # judge. Same database, two answers, and the row-based one was wrong.
+  #
+  # DEGRADED is still decided on rows. Refusing to trade on thin evidence
+  # costs an opportunity; permitting trading on thin evidence costs money.
+  min_contracts: 100
+  # Ignore forecasts made before this timestamp. A configuration change makes
+  # a different forecaster: on 21 September the lead gate cut trading from
+  # fourteen days out to six hours, and averaging both sides of that line
+  # describes neither bot. Blank means use everything.
+  since: "2026-09-21"
+  # Beat climatology by this much to be called CALIBRATED.
+  calibrated_margin: 0.01
+  # Fall this far BELOW climatology and new entries are suspended.
+  degraded_margin: 0.03
+  # Scores move slowly; re-reading the journal every scan is wasted work.
+  refresh_seconds: 300
+  # What to do before there is any settled data. True means the bot trades
+  # while it earns its record - the lenient posture above.
+  unproven_may_trade: true
+
+# One shared view of the exchange, read by the scan and the position worker
+# alike. Before this each loop asked REST for what it needed, so the two could
+# be looking at different prices for the same market in the same second - and
+# a sweep re-read eighty thousand markets to find the handful that had moved.
+#
+# The store REFUSES to serve anything it does not trust, so the worst case is
+# the REST call that was being made anyway.
+market_state:
+  # A book older than this is a cache miss, not a cheap read. Keep it well
+  # under the freshness limit the execution path enforces before trading.
+  max_book_age_seconds: 20
+  # Market records (title, strike, close time) change far more slowly than
+  # prices do.
+  max_market_age_seconds: 300
+  # The exchange has 80,000 markets. An unbounded cache in a process that runs
+  # for days is a memory leak with extra steps.
+  capacity: 4000
+
+# The live market-data feed.
+#
+#   wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2
+#
+# OFF by default, and optional by design. Every failure - no credentials, a
+# refused handshake, a dropped socket, a message that will not parse - ends
+# the same way: the affected books are marked untrusted and prices are read
+# over REST exactly as before. Nothing here can make the bot trade on worse
+# information than it had without it, and nothing here can stop it trading.
+#
+# Turn it on once you have watched a scan or two with it off, so you have
+# something to compare the hit rate against.
+feed:
+  enabled: false
+  # Demo only. The production lockout checks this URL exactly as it checks the
+  # REST endpoint: a market-data socket pointed at production is still
+  # production.
+  url: "wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2"
+  # How many markets to follow. The working set is a few hundred, not 80,000.
+  max_subscriptions: 500
+  # Send our own ping if the socket has been quiet this long, so it is not
+  # dropped for being idle.
+  ping_seconds: 20
+  # No message at all for this long means the connection is dead even if the
+  # socket has not said so. Better to reconnect than to serve ageing books.
+  idle_timeout: 60
+  reconnect_min: 2
+  reconnect_max: 60
+  recv_timeout: 5
+
+# How the work is divided. Each worker runs on its OWN clock, in this one
+# process, so a strategy that needs six series does not wait on one that needs
+# the whole exchange.
+#
+# The first live run made that case by itself: a single pass took 2.8 HOURS,
+# and twenty minutes of it was paging eighty thousand markets to reach four
+# hundred whose tickers the forecast strategy already knew.
+#
+# What is NOT divided is risk. The limits are total exposure, per-event and
+# per-market, and two things that each believe they own the account cannot
+# enforce any of them. Every worker judges through the same gate and executes
+# through the same manager holding the same lock.
+# ---------------------------------------------------------------------
+# EXECUTION PROBE - what would this order cost on a REAL book?
+# ---------------------------------------------------------------------
+# The one question a demo exchange cannot answer, and the last unknown before
+# any conversation about real money.
+#
+# Demo liquidity is synthetic. Every execution number this bot has measured -
+# spread, depth, slippage, whether 25 contracts move the price - describes a
+# fiction. The forecasting edge is measured and, in the traded band, the
+# clustered interval now excludes zero. The COST of taking that edge is not
+# measured at all, and the gap between the two is the whole question.
+#
+# This compares the same market at the same instant on both books and walks a
+# realistic size down each. It reads PUBLIC production market data: no API
+# key, no signature, no account, GET only, and the path allowlist in env_guard
+# refuses anything touching a portfolio, order, fill or balance.
+#
+# Measurement only. Nothing it computes reaches a trading decision, and the
+# reader it uses has no method that can send an order.
+execution_probe:
+  enabled: true
+  # The order size the question is actually about.
+  size: 25
+  # Markets sampled per pass. Small on purpose: this is a slow accumulation
+  # over a fortnight, not a survey, and it should never be the reason a scan
+  # is late.
+  markets_per_pass: 6
+
+workers:
+  # Execution probe: demo book vs live book, every 15 minutes.
+  execution_probe:
+    enabled: true
+    interval_seconds: 900
+
+  # Scoring: what did the temperature actually DO?
+  #
+  # Fills forecasts.actual_f from NWS observations once a target day is over,
+  # which is the only way a per-station bias ever becomes visible.
+  #
+  # This was a manual script from 14 September that nothing ever ran. By 22
+  # September actual_f was NULL on all 470 rows and Miami had been forecast
+  # 4.06F too cool for eight days, entirely unseen - the market was pricing
+  # "83F or below" at 3c while the bot called it 29.6%. On a clock now.
+  #
+  # NOT gated on the exchange being open: the weather happens regardless, and
+  # an overnight close is the ideal time to be filling in yesterday.
+  scoring:
+    enabled: true
+    interval_seconds: 3600
+
+  # EVERY forecast strategy gets its own worker, on its own clock, running in
+  # parallel. Adding an estimator to `forecast.estimators` above produces a new
+  # parallel worker on the next start with nothing else to wire up - and it is
+  # still the one command that starts them all.
+  #
+  # `forecast:` below is the DEFAULT for every strategy. To give one its own
+  # timing, add a block named after the estimator, e.g.
+  #
+  #   rates_fedfunds:
+  #     interval_seconds: 60        # reprices far faster than weather does
+  #
+  # What they share is the account: one gate, one set of risk limits, one
+  # execution lock. Splitting the work is fine; splitting the account is not.
+  forecast:
+    enabled: true
+    interval_seconds: 120
+    # Consecutive failures before this worker suspends itself. A data source
+    # that has been down for an hour is not fixed by asking it every two
+    # minutes, and a log full of one error is a log nobody reads. The OTHER
+    # workers carry on - that is the whole point of the supervisor.
+    max_consecutive_failures: 5
+    backoff_start_seconds: 5
+    backoff_max_seconds: 600
+    # A pass longer than this is reported. Not killed: there is no safe way to
+    # interrupt a worker mid-trade.
+    slow_pass_seconds: 300
+
+  # The whole-exchange sweep. Structural arbitrage cannot name its markets in
+  # advance, so this one earns its slow clock.
+  arbitrage:
+    enabled: true
+    interval_seconds: 1800
+    max_consecutive_failures: 5
+    backoff_start_seconds: 30
+    backoff_max_seconds: 1800
+    slow_pass_seconds: 1800
+
+arb_loop:
+  # How often the main thread prints a line saying the bot is alive. The
+  # workers do the actual work on their own clocks; this exists purely so a
+  # person watching can tell "waiting for the exchange to open" apart from
+  # "crashed". On 19 September the bot sat silent for fifteen minutes while
+  # the demo board was closed and got stopped by hand, because nothing said
+  # which of the two it was.
+  heartbeat_seconds: 60
+  scan_interval_seconds: 60
+  # The demo exchange closes overnight and reopens around 05:00 CST. Scanning
+  # a closed board costs the same fifteen minutes and reads books nobody is
+  # quoting, so the loop waits this long between status checks instead.
+  closed_check_seconds: 900

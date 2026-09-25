@@ -1,0 +1,18 @@
+.env
+*.pem
+*.key
+data/*.db
+logs/*.log
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Runtime output - the bot writes these; they are data, not code.
+data/
+logs/
+# Old point-in-time copies; history lives in git from here on.
+_backup-*/
+_retired-*/
+# macOS clutter from the Mac copy.
+.DS_Store

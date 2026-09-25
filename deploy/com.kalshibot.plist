@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd job: keep kalshibot running for the two-week demo record.
+
+  INSTALL (one time):
+      cp ~/trading/kalshi-bot/deploy/com.kalshibot.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.kalshibot.plist
+      launchctl list | grep kalshibot        # confirm it is there
+
+  STOP:
+      launchctl unload ~/Library/LaunchAgents/com.kalshibot.plist
+
+  WHAT THIS FIXES
+  The bot has been run by double-clicking a .command, which ties it to a
+  Terminal window. Close the window, log out, or let the Mac restart and it
+  stops - silently. Nothing notices. That already happened once (see
+  the-silent-bot-incident), and over a fortnight it is not a question of if.
+
+  KeepAlive is true here, unlike the template this replaces: if the process
+  dies it comes back. ThrottleInterval stops a crash-loop from hammering
+  Kalshi - a bot that cannot start will retry every 60s, not continuously.
+
+  WHAT THIS DOES NOT FIX
+  A sleeping Mac runs nothing, launchd included. For the two weeks either:
+      sudo pmset -a sleep 0 disablesleep 1     (mains power, lid open)
+  or run it under caffeinate, or accept gaps and read them off the dashboard.
+  The honest version is: this is a laptop, and a laptop is not a server. It
+  is good enough to build a forecasting record; it is not good enough to hold
+  real money unattended.
+
+  MODE
+  DEMO_LIVE places orders on the DEMO exchange. That is the point of the
+  fortnight: exercise the whole path - entries, exits, stops, settlement -
+  and build the record. It cannot reach production; env_guard refuses.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kalshibot</string>
+
+    <!-- deploy/run_supervised.sh runs the self-test and the demo lockout
+         check, then execs the bot. Running arb.py directly would skip both;
+         running run_bot.sh would hang on its interactive restart prompt. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/eddiegutierrez/trading/kalshi-bot/deploy/run_supervised.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/eddiegutierrez/trading/kalshi-bot</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart it if it dies. This is the whole reason the file changed. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Never respawn faster than once a minute. A bot that cannot start
+         should not become a request flood. -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/eddiegutierrez/trading/kalshi-bot/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/eddiegutierrez/trading/kalshi-bot/logs/launchd.err.log</string>
+</dict>
+</plist>

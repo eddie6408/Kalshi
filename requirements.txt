@@ -1,0 +1,14 @@
+# ---- Core (required) ----
+requests>=2.32.0
+cryptography>=42.0.0
+PyYAML>=6.0.1
+python-dotenv>=1.0.1
+
+# ---- Numerics ----
+numpy>=1.26.0
+
+# ---- Optional: nicer console output ----
+rich>=13.7.0
+
+# ---- Optional: only needed if you enable the Claude estimator in rendition 2 ----
+# anthropic>=0.40.0

@@ -1,0 +1,41 @@
+# systemd unit for running kalshibot on a Linux VPS.
+#
+#   sudo cp deploy/kalshibot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now kalshibot
+#   sudo systemctl status kalshibot
+#   journalctl -u kalshibot -f
+#
+# Adjust User/paths if you did not create a user called "kalshi".
+
+[Unit]
+Description=kalshibot - Kalshi trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kalshi
+Group=kalshi
+WorkingDirectory=/home/kalshi/kalshi-bot
+# run_supervised.sh runs the self-test and the demo lockout check, then
+# execs the bot with --mode DEMO_LIVE --loop --forecast. Pointing ExecStart
+# at arb.py directly would skip both checks.
+ExecStart=/bin/bash /home/kalshi/kalshi-bot/deploy/run_supervised.sh
+Restart=on-failure
+RestartSec=30
+# If the bot trips a safety limit it exits 0 on purpose. Do NOT auto-restart
+# that case - a tripped limit should get a human's attention.
+SuccessExitStatus=0
+StandardOutput=journal
+StandardError=journal
+
+# Basic hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/kalshi/kalshi-bot/data /home/kalshi/kalshi-bot/logs /home/kalshi/kalshi-bot/.build
+
+[Install]
+WantedBy=multi-user.target

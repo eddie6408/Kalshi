@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en" data-palette="#2a78d6,#e34948">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prometheus</title>
+<style>
+  :root{
+    color-scheme: light;
+    --surface-0:#f4f3f0; --surface-1:#fcfcfb; --surface-2:#eceae5;
+    --line:#dedcd5; --grid:#e8e6e0;
+    --ink:#0b0b0b; --ink-2:#52514e; --ink-3:#83817a;
+    --pos:#2a78d6; --neg:#e34948; --mid:#f0efec;
+    --seq-700:#0d366b; --seq-450:#2a78d6; --seq-250:#86b6ef; --seq-150:#b7d3f6;
+    --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+    --radius:10px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:where(:not([data-theme="light"])){
+      color-scheme: dark;
+      --surface-0:#111110; --surface-1:#1a1a19; --surface-2:#242422;
+      --line:#34342f; --grid:#2b2b28;
+      --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#8f8e85;
+      --pos:#3987e5; --neg:#e66767; --mid:#383835;
+      --seq-700:#cde2fb; --seq-450:#3987e5; --seq-250:#256abf; --seq-150:#184f95;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --surface-0:#111110; --surface-1:#1a1a19; --surface-2:#242422;
+    --line:#34342f; --grid:#2b2b28;
+    --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#8f8e85;
+    --pos:#3987e5; --neg:#e66767; --mid:#383835;
+    --seq-700:#cde2fb; --seq-450:#3987e5; --seq-250:#256abf; --seq-150:#184f95;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--surface-0); color:var(--ink);
+    font:14px/1.5 ui-sans-serif,-apple-system,"SF Pro Text",Segoe UI,Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:28px 16px 72px}
+  header{display:flex; flex-wrap:wrap; align-items:baseline; gap:12px; margin-bottom:6px}
+  h1{font-size:20px; margin:0; letter-spacing:.005em; font-weight:650}
+  .sub{color:var(--ink-3); font-size:12.5px}
+  .spacer{flex:1}
+  button.theme{
+    background:var(--surface-2); color:var(--ink-2); border:1px solid var(--line);
+    border-radius:8px; padding:5px 11px; font-size:12.5px; cursor:pointer;
+  }
+  button.theme:hover{color:var(--ink)}
+  h2{font-size:12px; text-transform:uppercase; letter-spacing:.075em;
+     color:var(--ink-3); margin:30px 0 11px; font-weight:600}
+  .card{background:var(--surface-1); border:1px solid var(--line);
+        border-radius:var(--radius); padding:16px 18px}
+  .grid{display:grid; gap:12px}
+  .tiles{grid-template-columns:repeat(auto-fit,minmax(168px,1fr))}
+  .two{grid-template-columns:repeat(auto-fit,minmax(360px,1fr));align-items:start}
+  .tile .label{font-size:11.5px; color:var(--ink-3); text-transform:uppercase;
+               letter-spacing:.06em; margin-bottom:7px}
+  .tile .value{font-size:27px; font-weight:600; letter-spacing:-.02em;
+               font-variant-numeric:tabular-nums; line-height:1.15}
+  .tile .note{font-size:12px; color:var(--ink-2); margin-top:5px}
+  .pos{color:var(--pos)} .neg{color:var(--neg)}
+  .chart-title{font-size:13.5px; font-weight:600; margin:0 0 2px}
+  .chart-note{font-size:12px; color:var(--ink-2); margin:0 0 14px; max-width:60ch}
+  svg{display:block; width:100%; overflow:visible}
+  .axis text{font-size:11px; fill:var(--ink-3)}
+  .axis line,.axis path{stroke:var(--line)}
+  .grid-line{stroke:var(--grid); stroke-width:1}
+  .bar-label{font-size:11.5px; fill:var(--ink-2); font-variant-numeric:tabular-nums}
+  .bar-name{font-size:12px; fill:var(--ink)}
+  table{width:100%; border-collapse:collapse; font-size:12.5px;
+        font-variant-numeric:tabular-nums}
+  th{text-align:left; font-weight:600; color:var(--ink-3); font-size:11px;
+     text-transform:uppercase; letter-spacing:.055em; padding:0 10px 8px 0;
+     border-bottom:1px solid var(--line)}
+  td{padding:7px 10px 7px 0; border-bottom:1px solid var(--grid); color:var(--ink-2)}
+  td.t{color:var(--ink); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px}
+  .num{text-align:right}
+  .chip{display:inline-flex; align-items:center; gap:5px; font-size:11.5px;
+        padding:2px 8px; border-radius:999px; background:var(--surface-2);
+        color:var(--ink-2); border:1px solid var(--line)}
+  .chip .dot{width:7px; height:7px; border-radius:50%}
+  .tip{position:fixed; pointer-events:none; opacity:0; transition:opacity .09s;
+       background:var(--surface-1); color:var(--ink); border:1px solid var(--line);
+       border-radius:8px; padding:7px 10px; font-size:12px; z-index:50;
+       box-shadow:0 6px 22px rgba(0,0,0,.14); max-width:280px}
+  .tip b{font-weight:600}
+  .tip .k{color:var(--ink-3)}
+  details{margin-top:12px} summary{cursor:pointer; color:var(--ink-3); font-size:12px}
+  .empty{color:var(--ink-3); font-size:12.5px; padding:6px 0}
+  .legend{display:flex; gap:14px; flex-wrap:wrap; margin-bottom:10px; font-size:12px;
+          color:var(--ink-2)}
+  .legend span{display:inline-flex; align-items:center; gap:6px}
+  .swatch{width:11px; height:3px; border-radius:2px}
+  footer{margin-top:34px; color:var(--ink-3); font-size:11.5px; line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Prometheus</h1>
+    <span class="sub">Kalshi forecasting bot</span>
+    <span class="sub" id="stamp"></span>
+    <span class="spacer"></span>
+    <button class="theme" id="theme">dark / light</button>
+  </header>
+  <p class="sub" style="margin:0 0 4px">Every number here is read from the journal. Nothing is estimated.</p>
+
+  <h2>Is it calibrated?</h2>
+  <p class="chart-note" id="regime" style="margin:0 0 12px"></p>
+  <div class="grid tiles" id="tiles"></div>
+
+  <div class="grid two" style="margin-top:12px">
+    <div class="card">
+      <p class="chart-title">Reliability &mdash; what it said against what happened</p>
+      <p class="chart-note">Each point is a bucket of forecasts. On the dashed line, a
+        20% forecast happens 20% of the time. <b>Above</b> the line means the bot is
+        under-forecasting: the thing happens more often than it says.</p>
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--seq-450)"></span>observed frequency</span>
+        <span><span class="swatch" style="background:var(--ink-3);opacity:.6"></span>perfect calibration</span>
+      </div>
+      <div id="reliability"></div>
+    </div>
+    <div class="card">
+      <p class="chart-title">Skill by city</p>
+      <p class="chart-note">Each city measured against <b>its own</b> climatology,
+        because a raw Brier score is not comparable between cities with different
+        base rates. Right of the line is better than guessing the base rate;
+        left of it is worse.</p>
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--pos)"></span>has skill</span>
+        <span><span class="swatch" style="background:var(--neg)"></span>worse than climatology</span>
+      </div>
+      <div id="series"></div>
+    </div>
+  </div>
+
+  <div class="grid two" style="margin-top:12px">
+    <div class="card">
+      <p class="chart-title">Skill by lead time</p>
+      <p class="chart-note">How far ahead the forecast was made, against how much
+        skill it turned out to have. A dot marks the band the bot is allowed to
+        trade.</p>
+      <div id="lead"></div>
+    </div>
+    <div class="card">
+      <p class="chart-title">Why it did not trade</p>
+      <p class="chart-note">Counted from every opportunity the strategies produced.</p>
+      <div id="rejects"></div>
+    </div>
+  </div>
+
+  <h2>Is the forecast itself right?</h2>
+  <div class="card" style="margin-top:12px">
+    <p class="chart-title">Degrees, not probabilities</p>
+    <p class="chart-note">Predicted daily high against the temperature the station
+      actually recorded. A probability can look wrong for many reasons; a
+      station that is <b>consistently</b> forecast too warm or too cool has
+      exactly one. Positive means the bot forecast warmer than it turned out.</p>
+    <div id="bias"></div>
+  </div>
+
+  <h2>Money</h2>
+  <div class="grid tiles" id="money"></div>
+  <div class="card" style="margin-top:12px">
+    <p class="chart-title">Realised profit and loss, by market</p>
+    <p class="chart-note">Closed round trips only &mdash; contracts bought and sold.
+      Open positions are below and are not counted here.</p>
+    <div id="pnl"></div>
+  </div>
+
+  <h2>Open positions</h2>
+  <div class="card"><div id="open"></div></div>
+
+  <h2>Is it alive?</h2>
+  <div class="grid tiles" id="health"></div>
+  <div class="card" style="margin-top:12px">
+    <p class="chart-title">Recent passes</p>
+    <p class="chart-note">How long each scan took, newest on the right.</p>
+    <div id="scans"></div>
+  </div>
+
+  <footer id="foot"></footer>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+const DATA = /*__DATA__*/null;
+const tip = document.getElementById("tip");
+const fmtUSD = v => (v < 0 ? "-$" : "$") + Math.abs(v).toFixed(2);
+const pct = v => (100 * v).toFixed(1) + "%";
+const esc = s => String(s).replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function showTip(e, html){
+  tip.innerHTML = html; tip.style.opacity = 1;
+  const r = tip.getBoundingClientRect();
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => tip.style.opacity = 0;
+function hover(el, html){
+  el.addEventListener("mousemove", e => showTip(e, html));
+  el.addEventListener("mouseleave", hideTip);
+  el.style.cursor = "default";
+}
+const svgEl = (n, a = {}) => {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", n);
+  for (const k in a) e.setAttribute(k, a[k]);
+  return e;
+};
+
+// ---------------------------------------------------------------- tiles
+//: Distinct contracts needed before the aggregate verdict means anything.
+const MIN_CONTRACTS = 100;
+
+function tile(label, value, note, cls){
+  return `<div class="card tile"><div class="label">${esc(label)}</div>
+    <div class="value ${cls || ""}">${value}</div>
+    ${note ? `<div class="note">${note}</div>` : ""}</div>`;
+}
+
+function renderTiles(){
+  const f = DATA.forecasts;
+  const edge = (f.brier != null && f.climatology != null) ? f.climatology - f.brier : null;
+  // Judge on CONTRACTS, not rows. The same contract is re-forecast about six
+  // times a day, so 452 rows were 74 independent things, and a bootstrap over
+  // contracts put the aggregate skill interval across zero. Reading a verdict
+  // off the row count states as settled what the evidence leaves open.
+  const eff = f.contracts == null ? f.settled : f.contracts;
+  const verdict = edge == null ? "no settled forecasts yet"
+      : eff < MIN_CONTRACTS ? "too few to judge"
+      : edge >= 0.01 ? "beating climatology" : edge <= -0.03 ? "worse than climatology"
+      : "no clear verdict";
+  document.getElementById("tiles").innerHTML =
+    tile("Brier score", f.brier == null ? "&mdash;" : f.brier.toFixed(4),
+         f.climatology == null ? "" :
+         `climatology ${f.climatology.toFixed(4)} &middot; <b class="${edge>0?'pos':'neg'}">${edge>=0?"+":""}${edge.toFixed(4)}</b>`,
+         edge != null && edge > 0 ? "pos" : edge != null && edge < 0 ? "neg" : "") +
+    tile("Verdict", verdict.replace(/^\w/, c=>c.toUpperCase()),
+         f.contracts == null
+           ? `over ${f.settled} settled forecasts`
+           : `${f.settled.toLocaleString()} forecasts, but only
+              <b>${f.contracts}</b> distinct contracts &mdash; that is the
+              number that counts` +
+             (eff < MIN_CONTRACTS ? `, and ${MIN_CONTRACTS} is the bar` : "")) +
+    tile("Forecasts logged", f.logged.toLocaleString(),
+         `${f.settled.toLocaleString()} scored against outcomes`) +
+    tile("Mean forecast", f.mean_forecast == null ? "&mdash;" : pct(f.mean_forecast),
+         f.base_rate == null ? "" :
+         `things actually happened ${pct(f.base_rate)} of the time`);
+}
+
+// ------------------------------------------------------- reliability
+function renderReliability(){
+  const host = document.getElementById("reliability");
+  const pts = DATA.reliability || [];
+  if (!pts.length){ host.innerHTML = '<p class="empty">No settled forecasts yet.</p>'; return; }
+  const W = 420, H = 300, m = {t:8, r:14, b:34, l:40};
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const x = v => m.l + v * iw, y = v => m.t + (1 - v) * ih;
+  const svg = svgEl("svg", {viewBox:`0 0 ${W} ${H}`, role:"img",
+                            "aria-label":"Reliability diagram"});
+
+  for (let i = 0; i <= 5; i++){
+    const v = i / 5;
+    svg.appendChild(svgEl("line", {x1:m.l, x2:m.l+iw, y1:y(v), y2:y(v), class:"grid-line"}));
+    const t = svgEl("text", {x:m.l-8, y:y(v)+4, "text-anchor":"end", class:"axis"});
+    t.textContent = (v*100) + "%"; svg.appendChild(t);
+    const b = svgEl("text", {x:x(v), y:m.t+ih+20, "text-anchor":"middle", class:"axis"});
+    b.textContent = (v*100) + "%"; svg.appendChild(b);
+  }
+  // perfect calibration
+  svg.appendChild(svgEl("line", {x1:x(0), y1:y(0), x2:x(1), y2:y(1),
+    stroke:"var(--ink-3)", "stroke-width":2, "stroke-dasharray":"5 5",
+    opacity:.55, "stroke-linecap":"round"}));
+
+  const line = pts.map(p => `${x(p.forecast)},${y(p.observed)}`).join(" ");
+  svg.appendChild(svgEl("polyline", {points:line, fill:"none",
+    stroke:"var(--seq-450)", "stroke-width":2,
+    "stroke-linejoin":"round", "stroke-linecap":"round"}));
+
+  const maxN = Math.max(...pts.map(p => p.n));
+  pts.forEach(p => {
+    const r = 5 + 5 * Math.sqrt(p.n / maxN);
+    const g = svgEl("g");
+    // The interval FIRST, so the marker sits on top of it. Without this a
+    // thin bucket looks exactly as certain as a thick one, which is how a
+    // handful of rows came to read as a broken calibration curve.
+    if (p.hi != null && p.lo != null){
+      g.appendChild(svgEl("line", {x1:x(p.forecast), x2:x(p.forecast),
+        y1:y(p.lo), y2:y(p.hi), stroke:"var(--seq-450)", "stroke-width":2,
+        opacity:.45, "stroke-linecap":"round"}));
+    }
+    g.appendChild(svgEl("circle", {cx:x(p.forecast), cy:y(p.observed), r:r+2,
+      fill:"var(--surface-1)"}));                    // 2px surface ring
+    g.appendChild(svgEl("circle", {cx:x(p.forecast), cy:y(p.observed), r:r,
+      fill:"var(--seq-450)"}));
+    svg.appendChild(g);
+    const gap = p.observed - p.forecast;
+    const clears = p.lo != null && (p.lo > p.forecast || p.hi < p.forecast);
+    hover(g, `<b>${(p.bucket*10)}&ndash;${(p.bucket*10+10)}% bucket</b><br>
+      <span class="k">forecast</span> ${pct(p.forecast)}<br>
+      <span class="k">actually happened</span> ${pct(p.observed)}
+        ${p.lo == null ? "" : `<span class="k">(95% ${pct(p.lo)}&ndash;${pct(p.hi)})</span>`}<br>
+      <span class="k">gap</span> <b>${gap>=0?"+":""}${(100*gap).toFixed(1)} pts</b>
+      ${gap > 0 ? "(under-forecasting)" : gap < 0 ? "(over-forecasting)" : ""}<br>
+      <span class="k">${clears ? "the interval excludes the forecast - real"
+                               : "the interval covers the forecast - could be noise"}</span><br>
+      <span class="k">forecasts</span> ${p.n}`);
+  });
+  const xl = svgEl("text", {x:m.l+iw/2, y:H-2, "text-anchor":"middle", class:"axis"});
+  xl.textContent = "what the bot forecast"; svg.appendChild(xl);
+  host.appendChild(svg);
+
+  // Only a bucket whose interval EXCLUDES its own forecast is worth calling
+  // out. Otherwise the headline is just the noisiest bucket.
+  const real = pts.filter(p => p.lo != null &&
+                          (p.lo > p.forecast || p.hi < p.forecast));
+  const worst = (real.length ? real : pts).reduce((a,b) =>
+    Math.abs(b.observed-b.forecast) > Math.abs(a.observed-a.forecast) ? b : a);
+  const gap = worst.observed - worst.forecast;
+  if (real.length && Math.abs(gap) > 0.03){
+    const p = document.createElement("p");
+    p.className = "chart-note"; p.style.marginTop = "12px";
+    p.innerHTML = `Widest gap: in the <b>${worst.bucket*10}&ndash;${worst.bucket*10+10}%</b>
+      bucket the bot says ${pct(worst.forecast)} and the outcome happens
+      ${pct(worst.observed)} &mdash; <b>${gap>0?"+":""}${(100*gap).toFixed(1)} points</b>
+      over ${worst.n} forecasts.`;
+    host.appendChild(p);
+  }
+
+  const thin = DATA.reliability_dropped || [];
+  if (thin.length){
+    const t = document.createElement("p");
+    t.className = "chart-note"; t.style.marginTop = "8px";
+    t.innerHTML = `Not plotted: ` + thin.map(b =>
+      `<b>${b.bucket*10}&ndash;${b.bucket*10+10}%</b> (${b.n})`).join(", ") +
+      ` &mdash; too few settled forecasts to estimate a frequency.`;
+    host.appendChild(t);
+  }
+}
+
+// ------------------------------------------------------- regime
+// Most of this page was produced by a bot that no longer exists. On the day
+// the lead gate went in the machine changed materially, and one average over
+// both sides of that line describes neither of them.
+function renderRegime(){
+  const el = document.getElementById("regime");
+  const r = DATA.regime;
+  if (!el || !r || !r.before){ if (el) el.remove(); return; }
+  const total = r.before + r.since;
+  el.innerHTML = `<b>${r.before.toLocaleString()}</b> of these
+    ${total.toLocaleString()} settled forecasts were made before
+    <b>${esc(r.boundary)}</b>, when the <b>${esc(r.change)}</b> went in.
+    Everything on this page pools both. Treat it as history until the record
+    since then is large enough to stand on its own
+    (<b>${r.since.toLocaleString()}</b> so far).`;
+}
+
+// ------------------------------------------------------- forecast bias
+function renderBias(){
+  const el = document.getElementById("bias");
+  if (!el) return;
+  const rows = DATA.bias || [];
+  if (!rows.length){
+    el.innerHTML = `<p class="empty">Nothing scored yet &mdash; the scoring
+      worker fills this in once a target day is over.</p>`;
+    return;
+  }
+  bars("bias", rows.map(r => ({
+    name: r.series.replace(/^KXHIGH/, "") + " " + r.station,
+    value: r.bias_f,
+    display: (r.bias_f >= 0 ? "+" : "") + r.bias_f.toFixed(2) + "F",
+    fill: Math.abs(r.bias_f) >= 2 ? "var(--neg)"
+        : Math.abs(r.bias_f) >= 1 ? "var(--warn)" : "var(--pos)",
+    tip: `<b>${esc(r.series)} &mdash; ${esc(r.station)}</b><br>
+      <span class="k">average error</span>
+        <b>${r.bias_f >= 0 ? "+" : ""}${r.bias_f.toFixed(2)}&deg;F</b>
+        ${r.bias_f >= 0 ? "(forecast too warm)" : "(forecast too cool)"}<br>
+      <span class="k">typical size of error</span> ${r.rmse_f.toFixed(2)}&deg;F<br>
+      <span class="k">worst single day</span>
+        ${r.worst_f >= 0 ? "+" : ""}${r.worst_f.toFixed(1)}&deg;F<br>
+      <span class="k">day-to-day swing</span>
+        ${r.day_sd_f == null ? "&mdash;" : "&plusmn;" + r.day_sd_f.toFixed(2) + "&deg;F"}<br>
+      ${r.bias_short_f == null ? "" :
+        `<span class="k">within 6h</span>
+         ${r.bias_short_f >= 0 ? "+" : ""}${r.bias_short_f.toFixed(2)}&deg;F
+         over ${r.n_short}<br>`}
+      <span class="k">days scored</span> <b>${r.n_days}</b>
+        <span class="k">(${r.n} forecasts)</span><br>
+      <span class="k">${r.separable
+        ? "separable from day-to-day weather"
+        : "not separable from day-to-day weather yet"}</span>`
+  })), {aria:"Forecast temperature bias by station", labelW:132, signed:true});
+
+  const bad = rows.filter(r => Math.abs(r.bias_f) >= 2);
+  if (bad.length){
+    const p = document.createElement("p");
+    p.className = "chart-note"; p.style.marginTop = "12px";
+    p.innerHTML = `<b>${bad.map(r => esc(r.series.replace(/^KXHIGH/, ""))).join(", ")}</b>
+      ${bad.length === 1 ? "is" : "are"} off by two degrees or more on average.
+      A systematic bias is not bad luck &mdash; check the settlement station
+      against Kalshi's own rule text, and whether the ensemble grid cell is
+      representative. Coastal stations are the usual offenders.
+      ${bad.some(r => r.separable) ? "" :
+        `<br><br>None of them is separable from day-to-day weather yet: the
+         swing between days is as large as the offset itself. A correction was
+         built for exactly this and <b>rejected by walk-forward validation</b>
+         &mdash; it made forecasts worse out of sample. Do not subtract these
+         numbers.`}`;
+    el.appendChild(p);
+  }
+}
+
+// ------------------------------------------------------- bar helper
+function bars(host, rows, opts){
+  const el = document.getElementById(host);
+  if (!rows.length){ el.innerHTML = '<p class="empty">Nothing recorded yet.</p>'; return; }
+  const rowH = 30, pad = 6, labelW = opts.labelW || 132, valueW = 62;
+  const W = 460, H = rows.length * rowH + pad * 2;
+  const iw = W - labelW - valueW - 12;
+  const max = Math.max(...rows.map(r => Math.abs(r.value)),
+                       ...(rows.map(r => r.marker || 0)));
+  const svg = svgEl("svg", {viewBox:`0 0 ${W} ${H}`, role:"img",
+                            "aria-label":opts.aria || host});
+  // A quantity that can be negative is a different chart from a magnitude.
+  // Skill is a polarity: above zero is better than knowing nothing, below is
+  // worse, and the sign is the whole point. So the baseline moves to the
+  // middle of the track and bars grow either way from a neutral zero line.
+  const signed = !!opts.signed;
+  const zero = signed ? labelW + iw / 2 : labelW;
+  if (signed){
+    svg.appendChild(svgEl("line", {x1:zero, x2:zero, y1:2, y2:H-2,
+      stroke:"var(--ink-3)", "stroke-width":2, opacity:.5,
+      "stroke-linecap":"round"}));
+  }
+  rows.forEach((r, i) => {
+    const y = pad + i * rowH;
+    const full = signed ? iw / 2 : iw;
+    const w = Math.max(2, (Math.abs(r.value) / max) * full);
+    const g = svgEl("g");
+    const name = svgEl("text", {x:0, y:y+rowH/2+4, class:"bar-name"});
+    name.textContent = r.name; g.appendChild(name);
+    const bar = svgEl("rect", {x: r.value < 0 ? zero - w : zero,
+      y:y+7, width:w, height:rowH-16,
+      rx:4, fill:r.fill || "var(--seq-450)"});
+    g.appendChild(bar);
+    if (r.marker != null){
+      const mx = labelW + (r.marker / max) * iw;
+      g.appendChild(svgEl("line", {x1:mx, x2:mx, y1:y+3, y2:y+rowH-5,
+        stroke:"var(--ink-3)", "stroke-width":2, "stroke-linecap":"round",
+        opacity:.75}));
+    }
+    const v = svgEl("text", {x:labelW+iw+10, y:y+rowH/2+4, class:"bar-label"});
+    v.textContent = r.display; g.appendChild(v);
+    svg.appendChild(g);
+    hover(g, r.tip);
+  });
+  el.appendChild(svg);
+}
+
+// Skill, not raw Brier. Brier is not comparable between cities: a city whose
+// questions resolve YES more often has a higher floor, so Miami reading
+// 0.1997 against New York's 0.0831 overstates the gap AND hides the sign.
+// Against each city's own climatology the picture inverts - one of them has
+// skill and the other is worse than a table of long-run frequencies.
+function skillRow(r, stripPrefix){
+  const bss = r.bss;
+  return {
+    name: stripPrefix ? r.key.replace(/^KXHIGH/, "") : r.key,
+    value: bss == null ? 0 : bss,
+    display: bss == null ? "--" : (bss >= 0 ? "+" : "") + bss.toFixed(3),
+    fill: bss == null ? "var(--mid)" : (bss >= 0 ? "var(--pos)" : "var(--neg)"),
+    tip: `<b>${esc(r.key)}</b><br>
+      <span class="k">skill vs climatology</span>
+        <b>${bss == null ? "--" : (bss >= 0 ? "+" : "") + bss.toFixed(3)}</b>
+        ${bss == null ? "" : bss >= 0 ? "(better than the base rate)"
+                                      : "(worse than the base rate)"}<br>
+      <span class="k">Brier</span> ${r.brier.toFixed(4)}<br>
+      <span class="k">its climatology</span> ${r.climatology.toFixed(4)}<br>
+      <span class="k">forecasts</span> ${r.n}`
+  };
+}
+
+function renderSeries(){
+  bars("series", (DATA.by_series || []).map(r => skillRow(r, true)),
+       {aria:"Forecast skill by city", labelW:118, signed:true});
+}
+
+function renderLead(){
+  const rows = (DATA.by_lead || []).map(l => {
+    const row = skillRow(l, false);
+    row.name = l.key + (l.traded ? "  \u2022" : "");
+    row.tip = row.tip + `<br><span class="k">${l.traded
+      ? "inside the lead gate - traded" : "outside the lead gate - not traded"}</span>`;
+    return row;
+  });
+  bars("lead", rows, {aria:"Forecast skill by lead time", labelW:84,
+                      signed:true});
+}
+
+function renderRejects(){
+  const o = DATA.opportunities || {total:0, accepted:0};
+  bars("rejects", (DATA.rejections || []).map(r => ({
+    name: r.key.replace(/_/g, " ").toLowerCase(), value: r.n,
+    display: String(r.n),
+    tip: `<b>${esc(r.key)}</b><br><span class="k">times</span> ${r.n}`
+  })), {aria:"Rejection reasons", labelW:178});
+  const p = document.createElement("p");
+  p.className = "chart-note"; p.style.margin = "12px 0 0";
+  p.innerHTML = `${o.accepted.toLocaleString()} of ${o.total.toLocaleString()}
+    opportunities passed the profitability gate.`;
+  document.getElementById("rejects").appendChild(p);
+}
+
+// ------------------------------------------------------- money
+function renderMoney(){
+  const m = DATA.money;
+  document.getElementById("money").innerHTML =
+    tile("Realised P/L", fmtUSD(m.realised),
+         "closed round trips, including settlement payouts",
+         m.realised >= 0 ? "pos" : "neg") +
+    tile("Still open", fmtUSD(m.open_cost), "cost of positions not yet closed") +
+    tile("Fees paid", fmtUSD(m.fees), "every leg, taker rate") +
+    tile("Net cash", fmtUSD(m.net_cash),
+         `${fmtUSD(m.spent)} out, ${fmtUSD(m.received)} back`,
+         m.net_cash >= 0 ? "pos" : "neg");
+
+  const rows = DATA.per_market || [];
+  if (!rows.length){
+    document.getElementById("pnl").innerHTML =
+      '<p class="empty">No closed round trips yet.</p>'; return;
+  }
+  const rowH = 30, pad = 6, labelW = 208, valueW = 72;
+  const W = 900, H = rows.length * rowH + pad * 2 + 20;
+  const iw = W - labelW - valueW - 20;
+  const max = Math.max(...rows.map(r => Math.abs(r.pnl))) || 1;
+  const zero = labelW + iw / 2;
+  const scale = v => (v / max) * (iw / 2);
+  const svg = svgEl("svg", {viewBox:`0 0 ${W} ${H}`, role:"img",
+                            "aria-label":"Realised profit and loss by market"});
+  svg.appendChild(svgEl("line", {x1:zero, x2:zero, y1:pad, y2:H-pad-20,
+    stroke:"var(--line)", "stroke-width":1}));
+  rows.forEach((r, i) => {
+    const y = pad + i * rowH;
+    const w = Math.max(2, Math.abs(scale(r.pnl)));
+    const g = svgEl("g");
+    const nm = svgEl("text", {x:0, y:y+rowH/2+4, class:"bar-name"});
+    nm.textContent = r.ticker.replace(/^KXHIGH/, "") + "  " + r.side.toUpperCase();
+    g.appendChild(nm);
+    g.appendChild(svgEl("rect", {
+      x: r.pnl >= 0 ? zero : zero - w, y:y+7, width:w, height:rowH-16, rx:4,
+      fill: r.pnl >= 0 ? "var(--pos)" : "var(--neg)"}));
+    const v = svgEl("text", {x:labelW+iw+14, y:y+rowH/2+4, class:"bar-label",
+      fill: r.pnl >= 0 ? "var(--pos)" : "var(--neg)"});
+    v.textContent = (r.pnl>=0?"+":"") + r.pnl.toFixed(2); g.appendChild(v);
+    svg.appendChild(g);
+    hover(g, `<b>${esc(r.ticker)}</b> ${r.side.toUpperCase()}<br>
+      <span class="k">${r.contracts} contracts</span><br>
+      <span class="k">bought</span> ${r.buy.toFixed(1)}c
+      <span class="k">${r.settled ? "settled at" : "sold"}</span> ${r.sell.toFixed(1)}c<br>
+      <b>${(r.pnl>=0?"+":"")}${fmtUSD(r.pnl).replace("$","$")}</b>
+      ${r.settled ? '<br><span class="k">closed by settlement, not by a trade</span>' : ""}`);
+  });
+  const lo = svgEl("text", {x:zero-8, y:H-4, "text-anchor":"end", class:"axis"});
+  lo.textContent = "loss"; svg.appendChild(lo);
+  const hi = svgEl("text", {x:zero+8, y:H-4, class:"axis"});
+  hi.textContent = "profit"; svg.appendChild(hi);
+  document.getElementById("pnl").appendChild(svg);
+}
+
+// ------------------------------------------------------- open positions
+function renderOpen(){
+  const rows = DATA.open || [];
+  const host = document.getElementById("open");
+  if (!rows.length){ host.innerHTML = '<p class="empty">Nothing open.</p>'; return; }
+  const shorts = rows.filter(r => r.qty < 0).length;
+  host.innerHTML = `<table><thead><tr>
+      <th>Market</th><th>Side</th><th class="num">Contracts</th>
+      <th class="num">Avg entry</th><th class="num">Cost</th><th>Last fill</th>
+    </tr></thead><tbody>${rows.map(r => `<tr>
+      <td class="t">${esc(r.ticker)}</td>
+      <td>${esc(r.side.toUpperCase())}</td>
+      <td class="num ${r.qty<0?'neg':''}">${r.qty>0?"+":""}${r.qty}</td>
+      <td class="num">${r.avg ? r.avg.toFixed(1)+"c" : "&mdash;"}</td>
+      <td class="num">${fmtUSD(r.cost)}</td>
+      <td>${esc(r.last)}</td></tr>`).join("")}</tbody></table>` +
+    (shorts ? `<p class="chart-note" style="margin:12px 0 0">
+      <b>${shorts} line${shorts>1?"s":""} show a negative count.</b> That is a short
+      the bot created by selling a side it did not hold &mdash; worth reconciling
+      against Kalshi's own position list.</p>` : "");
+}
+
+// ------------------------------------------------------- health
+function renderHealth(){
+  const h = DATA.health;
+  const age = ts => {
+    if (!ts) return null;
+    const mins = (Date.now() - Date.parse(ts + "Z")) / 60000;
+    return mins < 90 ? `${Math.round(mins)} min ago`
+         : mins < 60*36 ? `${(mins/60).toFixed(1)} h ago`
+         : `${(mins/1440).toFixed(1)} days ago`;
+  };
+  const running = h.run_started && !h.run_ended;
+  document.getElementById("health").innerHTML =
+    tile("Bot", running ? "Running" : "Stopped",
+         running ? `started ${age(h.run_started)}` : `stopped ${age(h.run_ended) || "&mdash;"}`,
+         running ? "pos" : "") +
+    tile("Last pass", age(h.last_scan) || "&mdash;",
+         `${h.last_scan_priced} markets priced in ${h.last_scan_seconds.toFixed(0)}s`) +
+    tile("Mode", h.mode || "&mdash;", "from the last run") +
+    tile("Awaiting settlement", h.unsettled.toLocaleString(),
+         "forecasts whose market has not resolved");
+}
+
+function renderScans(){
+  const rows = DATA.scans || [];
+  const host = document.getElementById("scans");
+  if (!rows.length){ host.innerHTML = '<p class="empty">No passes recorded.</p>'; return; }
+  const W = 900, H = 174, m = {t:32, r:8, b:26, l:44};
+  const iw = W-m.l-m.r, ih = H-m.t-m.b;
+  // One 2.8-hour sweep from before the workers landed would squash every
+  // other bar to a flat line. Scale to the 90th percentile instead and mark
+  // anything above it as clipped, with its real value on the bar - the
+  // outlier stays visible and honest without destroying the axis.
+  const sorted = rows.map(r => r.seconds).sort((a,b) => a-b);
+  const p90 = sorted[Math.floor(sorted.length * 0.9)] || 1;
+  const max = Math.max(60, p90);
+  const clipped = rows.filter(r => r.seconds > max).length;
+  let clippedSeen = 0;
+  const bw = Math.max(2, iw / rows.length - 3);
+  const svg = svgEl("svg", {viewBox:`0 0 ${W} ${H}`, role:"img",
+                            "aria-label":"Seconds per pass"});
+  [0, .5, 1].forEach(f => {
+    const y = m.t + (1-f)*ih;
+    svg.appendChild(svgEl("line", {x1:m.l, x2:m.l+iw, y1:y, y2:y, class:"grid-line"}));
+    const t = svgEl("text", {x:m.l-8, y:y+4, "text-anchor":"end", class:"axis"});
+    t.textContent = Math.round(f*max) + "s"; svg.appendChild(t);
+  });
+  rows.forEach((r, i) => {
+    const x = m.l + i * (iw / rows.length);
+    const over = r.seconds > max;
+    const hgt = over ? ih : Math.max(2, (r.seconds/max) * ih);
+    const g = svgEl("g");
+    g.appendChild(svgEl("rect", {x, y:m.t+ih-hgt, width:bw, height:hgt, rx:3,
+      fill: r.traded ? "var(--pos)" : "var(--seq-250)"}));
+    if (over){
+      // A broken top: this bar runs off the chart.
+      g.appendChild(svgEl("rect", {x:x-1, y:m.t-1, width:bw+2, height:4,
+        fill:"var(--surface-1)"}));
+      g.appendChild(svgEl("line", {x1:x-2, x2:x+bw+2, y1:m.t+3, y2:m.t-1,
+        stroke:"var(--ink-3)", "stroke-width":2, "stroke-linecap":"round"}));
+      // Adjacent clipped bars would print their labels on top of each other.
+      const stagger = (clippedSeen++ % 2) ? 19 : 7;
+      const lab = svgEl("text", {x:x+bw/2, y:m.t-stagger, "text-anchor":"middle",
+        class:"bar-label"});
+      lab.textContent = r.seconds >= 3600 ? (r.seconds/3600).toFixed(1)+"h"
+                      : Math.round(r.seconds)+"s";
+      g.appendChild(lab);
+    }
+    svg.appendChild(g);
+    hover(g, `<b>${esc(r.ts)}</b><br><span class="k">priced</span> ${r.priced}
+      markets<br><span class="k">took</span> ${r.seconds.toFixed(1)}s
+      ${over ? "<b>(off the top of the chart)</b>" : ""}<br>
+      <span class="k">traded</span> ${r.traded}`);
+  });
+  host.appendChild(svg);
+  if (clipped){
+    const n = document.createElement("p");
+    n.className = "chart-note"; n.style.margin = "10px 0 0";
+    n.innerHTML = `Axis scaled to the 90th percentile so recent passes are
+      readable. ${clipped} pass${clipped>1?"es run":" runs"} off the top and
+      ${clipped>1?"are":"is"} labelled.`;
+    host.appendChild(n);
+  }
+  const l = document.createElement("div");
+  l.className = "legend"; l.style.marginTop = "10px";
+  l.innerHTML = `<span><span class="swatch" style="background:var(--seq-250)"></span>no trade</span>
+                 <span><span class="swatch" style="background:var(--pos)"></span>traded</span>`;
+  host.appendChild(l);
+}
+
+// ------------------------------------------------------- go
+document.getElementById("stamp").textContent =
+  "built " + DATA.generated.replace("T", " ") + " UTC";
+renderRegime(); renderTiles(); renderReliability(); renderSeries();
+renderLead(); renderBias();
+renderRejects(); renderMoney(); renderOpen(); renderHealth(); renderScans();
+document.getElementById("foot").innerHTML =
+  `Rebuild with <b>DASHBOARD.command</b>, or <code>python scripts/dashboard.py</code>.
+   The journal is opened read-only and immutable, so this is safe to run while the
+   bot is trading. Named for the one who watched, and paid for it.`;
+document.getElementById("theme").onclick = () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const dark = cur ? cur === "dark"
+    : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+};
+</script>
+</body>
+</html>

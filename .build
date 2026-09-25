@@ -1,0 +1,10 @@
+2026-09-25T04:58:04Z
+# The build stamp an installer must check before overwriting anything.
+#
+# On 22 September an installer from the day before was double-clicked a
+# second time. It happily put back an older kalshibot/journal.py, the
+# reduce-only clamp lost the method it depends on, and the protection went
+# away without a word. Only the startup check noticed.
+#
+# Every installer from now on compares its own payload date against the
+# first line of this file and refuses to run if it is older.
