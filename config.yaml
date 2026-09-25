@@ -794,15 +794,37 @@ arb_loop:
 # This section MEASURES and RECORDS. Nothing in it blocks a trade yet; the
 # gates that act on health and freshness are 14A phase 4.
 sources:
-  # NWS asks API users for a contact address in the User-Agent. Blank until
-  # the operator supplies one.
-  nws_contact: ""
+  # NWS asks API users for a contact address in the User-Agent, so they can
+  # reach the operator rather than block the traffic. Sent to NWS only.
+  nws_contact: "your-email@example.com"
 
   # Fetch the NWS gridpoint forecast alongside every good ensemble and record
   # both (14A "source redundancy"). Recorded only - a disagreement does not
   # block anything until the phase-4 conflict gate, whose threshold will be
   # fitted from what this collects.
   cross_check_forecasts: true
+
+  # Data-quality gates (14A phase 4, kalshibot/data_gates.py). Each gate is
+  # enforce | shadow | off. Shadow records "would reject" in the journal
+  # (data_checks) and the log, and trades anyway - so a gate is switched to
+  # enforce only after its verdicts have been reviewed.
+  gates:
+    # A forecast gap this large is a broken or stale source, not an opinion.
+    # ENFORCED from day one; normal ensemble-vs-NWS gaps run 1-2.5F.
+    conflict_hard_cap_f: 5.0
+    # The fitted threshold. Blank until fitted from 5-7 days of data_checks
+    # by scripts/fit_conflict_threshold.py and approved by the operator.
+    conflict_threshold_f:
+    conflict_mode: shadow
+    # A source the strategy requires (sources.registry.*.required_by) is DOWN.
+    source_down_mode: shadow
+    # Forecast older than this (model runs are 6-24h old in normal running),
+    # or a live observation older than this.
+    stale_mode: shadow
+    max_forecast_age_seconds: 129600
+    max_observation_age_seconds: 7200
+    # Live "high so far" flagged X/Q by NWS, or a lone spike >5F clear.
+    obs_qc_mode: shadow
 
   health:
     down_after_failures: 3      # this many failures in a row -> DOWN
@@ -882,3 +904,18 @@ sources:
       structured: false
       read_by_bot: false
       notes: "Kalshi's named settlement source (series settlement_sources). No public API; it republishes the NWS climate report, which the bot reads at the origin instead."
+
+# ---------------------------------------------------------------------
+# ALERTS  (package 14A phase 4 - kalshibot/alerts.py)
+# ---------------------------------------------------------------------
+# Push notifications through ntfy (the ntfy phone app, subscribed to the
+# topic). The topic name is the only secret, so it lives in .env as
+# NTFY_TOPIC - never here. No topic = alerts go to the log only.
+#
+# Sent at most once per day per key: first data-conflict rejection per city,
+# a required source going DOWN, a settlement source changing, the circuit
+# breaker, a suspended worker or strategy.
+alerts:
+  enabled: true
+  ntfy_server: "https://ntfy.sh"
+  topic_env: NTFY_TOPIC

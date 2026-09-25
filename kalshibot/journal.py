@@ -265,6 +265,26 @@ CREATE TABLE IF NOT EXISTS source_health (
     last_data_time TEXT
 );
 
+-- 14A phase 4. One row per distinct forecast: the cross-check gap, data
+-- ages, and every data-quality gate verdict (WOULD_X = shadow, X = enforced).
+-- scripts/fit_conflict_threshold.py fits the conflict threshold from this.
+CREATE TABLE IF NOT EXISTS data_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    series TEXT,
+    target_date TEXT,
+    lead_hours REAL,
+    ensemble_f REAL,
+    cross_check_f REAL,
+    diff_f REAL,
+    forecast_age_seconds REAL,
+    observation_age_seconds REAL,
+    observation_suspect TEXT,
+    verdicts TEXT,
+    enforced INTEGER DEFAULT 0,
+    provenance TEXT
+);
+
 -- What Kalshi says each series settles on, as read from the exchange.
 CREATE TABLE IF NOT EXISTS settlement_sources (
     series TEXT NOT NULL,
@@ -1063,6 +1083,25 @@ class Journal:
              None if value is None else float(value), _j(value_json),
              data_time, _j(data_vintage), latency_ms),
         )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def log_data_check(self, *, series: str, target_date: str,
+                       lead_hours=None, ensemble_f=None, cross_check_f=None,
+                       diff_f=None, forecast_age_seconds=None,
+                       observation_age_seconds=None, observation_suspect=None,
+                       verdicts: list[str] | None = None, enforced: bool = False,
+                       provenance: list[int] | None = None) -> int:
+        cur = self.conn.execute(
+            """INSERT INTO data_checks
+               (ts, series, target_date, lead_hours, ensemble_f, cross_check_f,
+                diff_f, forecast_age_seconds, observation_age_seconds,
+                observation_suspect, verdicts, enforced, provenance)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (_now(), series, target_date, lead_hours, ensemble_f, cross_check_f,
+             diff_f, forecast_age_seconds, observation_age_seconds,
+             observation_suspect, ",".join(verdicts or []) or None,
+             1 if enforced else 0, _ids(provenance)))
         self.conn.commit()
         return int(cur.lastrowid)
 

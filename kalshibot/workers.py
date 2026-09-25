@@ -38,6 +38,8 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from .alerts import ALERTS, today_key
+
 log = logging.getLogger(__name__)
 
 
@@ -230,6 +232,12 @@ class Worker:
                       self.health.last_error)
             log.error("WORKER  the other workers carry on. Fix the cause and "
                       "restart the bot to bring %s back.", self.cfg.name)
+            ALERTS.send(today_key("worker", self.cfg.name),
+                        f"Worker {self.cfg.name} suspended",
+                        f"After {self.health.consecutive_failures} failures in a "
+                        f"row: {self.health.last_error}. Other workers carry on; "
+                        f"restart the bot once the cause is fixed.",
+                        priority="high", tags="warning")
         else:
             log.error("WORKER  %s failed (%d in a row), retrying in %.0fs: %s",
                       self.cfg.name, self.health.consecutive_failures,

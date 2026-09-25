@@ -299,6 +299,7 @@ class WeatherTemperatureEstimator:
                 "forecast_vintage": fc.vintage or None,
                 "observation_time": _iso(fc.observation_time),
                 "observation_age_seconds": _age(fc.observation_time),
+                "observation_suspect": fc.observation_suspect or None,
                 "cross_check_source": fc.cross_check_source or None,
                 "cross_check_f": (round(fc.cross_check_f, 2)
                                   if fc.cross_check_f is not None else None),

@@ -35,6 +35,8 @@ from kalshibot.journal import Journal
 from kalshibot.market_state import MarketState
 from kalshibot.sources import (MONITOR, OFF, DOWN, HEALTHY, SourceConfigError,
                                configure_from_settings, nws_user_agent)
+from kalshibot.alerts import ALERTS, today_key
+from kalshibot.alerts import configure_from_settings as configure_alerts
 from kalshibot.wsfeed import FeedConfig, KalshiFeed
 from kalshibot.workers import Supervisor, Worker, WorkerConfig
 from kalshibot.logging_setup import setup_logging
@@ -68,6 +70,11 @@ def check_settlement_sources(settings, market, journal) -> None:
             log.warning("SOURCES  %s settlement source CHANGED - now %s "
                         "(added %s, dropped %s). Check the contract rules.",
                         series, names, added, dropped)
+            ALERTS.send(today_key("settlement", series),
+                        f"{series} settlement source changed",
+                        f"Kalshi now lists {names}. Check the contract rules "
+                        f"before trusting the scoring.", priority="high",
+                        tags="warning")
         stray = [n for n in names if n not in registered]
         if stray:
             log.warning("SOURCES  %s settles on %s, which is not a registered "
@@ -378,6 +385,9 @@ def main() -> int:
     except SourceConfigError as exc:
         print(f"\n{R}{B}REFUSED TO START{X}\n  sources: {exc}\n", file=sys.stderr)
         return 6
+    configure_alerts(settings)
+    log.info("ALERTS  %s", "ntfy on" if ALERTS.active else
+             "off (no NTFY_TOPIC in .env) - alerts go to the log only")
     check_settlement_sources(settings, series_client, journal)
 
     # ---- one shared view of the exchange -------------------------------
@@ -625,10 +635,21 @@ def main() -> int:
                     log.info("MARKET STATE  %s | feed %s", state.stats.summary(),
                              feed.stats.summary() if feed_cfg.enabled else "off")
                     log.info("SOURCES  %s", MONITOR.summary())
+                    snap = MONITOR.snapshot()
                     try:
-                        journal.save_source_health(MONITOR.snapshot())
+                        journal.save_source_health(snap)
                     except Exception as exc:  # noqa: BLE001
                         log.debug("could not save source health: %s", exc)
+                    for row in snap:
+                        src = MONITOR.registry.get(row["source_id"])
+                        if row["state"] == DOWN and src and src.required_by:
+                            ALERTS.send(
+                                today_key("down", row["source_id"]),
+                                f"Source DOWN: {row['source_id']}",
+                                f"{src.publisher}: {row['consecutive_failures']} "
+                                f"failures in a row. Last error: "
+                                f"{row['last_error'] or '-'}", priority="high",
+                                tags="warning")
                 if all(w.health.suspended for w in supervisor.workers):
                     print(f"\n{R}  every worker is suspended; nothing left to "
                           f"do.{X}\n  {supervisor.summary()}\n")

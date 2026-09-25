@@ -28,6 +28,10 @@ from .calibration_gate import CalibrationConfig, CalibrationGate
 from .settlement import settle_forecasts
 from .strategies.forecast import ForecastConfig, ForecastStrategy
 
+from .data_gates import GateConfig
+from .alerts import ALERTS, today_key
+from .sources import MONITOR
+
 log = logging.getLogger(__name__)
 
 
@@ -199,8 +203,10 @@ class ArbitrageEngine:
                           name, sorted(ESTIMATORS))
                 continue
             try:
-                out.append(ForecastStrategy(factory(settings), fees, cfg,
-                                            journal=journal))
+                out.append(ForecastStrategy(
+                    factory(settings), fees, cfg, journal=journal,
+                    gates=GateConfig.from_dict(settings.get("sources.gates")),
+                    monitor=MONITOR))
                 log.info("FORECAST  %s registered", name)
             except Exception as exc:  # noqa: BLE001
                 log.error("FORECAST  %s failed to start: %s", name, exc)
@@ -472,6 +478,10 @@ class ArbitrageEngine:
                 suspended.add(strategy.name)
                 log.warning("CALIBRATION  %s SUSPENDED from new entries: %s",
                             strategy.name, why)
+                ALERTS.send(today_key("calibration", strategy.name),
+                            f"{strategy.name} suspended",
+                            f"Calibration gate stopped new entries: {why}",
+                            priority="high", tags="pause_button")
                 report.suspended[strategy.name] = why
         self._suspended = suspended          # kept for anything still reading it
         return suspended
@@ -586,6 +596,10 @@ class ArbitrageEngine:
         log.error("RISK  CIRCUIT BREAKER  %s. No new positions will be opened "
                   "until the bot is restarted. Existing positions are still "
                   "being managed.", why)
+        ALERTS.send(today_key("circuit_breaker"), "Circuit breaker tripped",
+                    f"{why}. No new positions until the bot is restarted; "
+                    f"existing positions are still managed.",
+                    priority="urgent", tags="rotating_light")
         return False, f"circuit breaker: {why}"
 
     def _risk_ok(self, op: ArbitrageOpportunity) -> tuple[bool, str]:

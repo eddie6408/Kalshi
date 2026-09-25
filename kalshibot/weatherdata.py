@@ -22,6 +22,11 @@ from zoneinfo import ZoneInfo
 import requests
 
 from . import sources as _sources
+from .data_gates import BAD_QC_FLAGS
+
+#: Same rule scoring uses (forecast_scoring.SPIKE_GAP_F): a lone maximum this
+#: far clear of every other reading is a sensor fault, not weather.
+SPIKE_GAP_F = 5.0
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +74,8 @@ class DailyTempForecast:
     vintage: dict = field(default_factory=dict)
     #: newest station observation behind observed_extreme_so_far
     observation_time: dt.datetime | None = None
+    #: why that observed extreme should not be trusted ("" = no reason found)
+    observation_suspect: str = ""
     #: independent second opinion (14A redundancy). Recorded, not acted on.
     cross_check_f: float | None = None
     cross_check_source: str = ""
@@ -169,10 +176,11 @@ class WeatherData:
             return None
 
         if station:
-            obs, obs_time, obs_id = self._observed_extreme(
+            obs, obs_time, obs_id, suspect = self._observed_extreme(
                 station, tz_name, target_date, kind)
             fc.observed_extreme_so_far = obs
             fc.observation_time = obs_time
+            fc.observation_suspect = suspect
             if obs_id is not None:
                 fc.provenance.append(obs_id)
 
@@ -390,12 +398,18 @@ class WeatherData:
         return self._observed_extreme(station, tz_name, target_date, kind)[0]
 
     def _observed_extreme(self, station: str, tz_name: str, target_date: dt.date,
-                          kind: str) -> tuple[float | None, dt.datetime | None, int | None]:
-        """(extreme so far, time of the newest observation, provenance id)."""
+                          kind: str) -> tuple[float | None, dt.datetime | None,
+                                              int | None, str]:
+        """(extreme so far, newest observation time, provenance id, suspect).
+
+        `suspect` names a reason not to trust the extreme - an NWS quality
+        flag of X/Q, or a lone reading more than SPIKE_GAP_F clear of the
+        next - and is "" when there is none. Reported, not acted on here:
+        the OBSERVATION_QC gate decides (kalshibot/data_gates.py)."""
         tz = ZoneInfo(tz_name)
         now_local = dt.datetime.now(tz)
         if now_local.date() != target_date:
-            return None, None, None
+            return None, None, None, ""
         start = dt.datetime.combine(target_date, dt.time(0, 0), tzinfo=tz)
         url = NWS_OBS.format(station=station)
         retrieved_at = dt.datetime.now(dt.timezone.utc)
@@ -414,7 +428,7 @@ class WeatherData:
                 call.data_time = max(stamps) if stamps else None
         except Exception as exc:  # noqa: BLE001
             log.warning("NWS observations for %s failed: %s", station, exc)
-            return None, None, None
+            return None, None, None, ""
 
         readings = []           # (deg F, timestamp, qc flag)
         for f in feats:
@@ -425,19 +439,29 @@ class WeatherData:
                 readings.append((float(v) * 9 / 5 + 32, props.get("timestamp"),
                                  temp.get("qualityControl")))
         if not readings:
-            return None, None, None
+            return None, None, None, ""
         pick = max if kind == "high" else min
         extreme = pick(readings, key=lambda x: x[0])
         latest = max((x[1] for x in readings if x[1]), default=None)
         qc: dict = {}
         for _v, _t, flag in readings:
             qc[str(flag)] = qc.get(str(flag), 0) + 1
+        suspect = ""
+        if str(extreme[2]) in BAD_QC_FLAGS:
+            suspect = f"NWS quality flag {extreme[2]} on the {extreme[0]:.1f}F reading"
+        else:
+            vals = sorted((x[0] for x in readings), reverse=(kind == "high"))
+            gap = abs(vals[0] - vals[1]) if len(vals) >= 2 else 0.0
+            if len(vals) >= 5 and gap > SPIKE_GAP_F:
+                suspect = (f"{vals[0]:.1f}F is {gap:.1f}F clear of the next "
+                           f"reading ({vals[1]:.1f}F) - looks like a sensor spike")
         oid = self.monitor.observe(
             "nws_observations", endpoint=url,
             data_type=f"observed_{kind}_so_far_f", subject=station,
             target_date=target_date.isoformat(), value=round(extreme[0], 2),
             value_json={"readings": len(readings), "extreme_at": extreme[1],
-                        "extreme_qc": extreme[2], "qc_flags": qc},
+                        "extreme_qc": extreme[2], "qc_flags": qc,
+                        "suspect": suspect or None},
             data_time=latest, retrieved_at=retrieved_at.isoformat(),
             latency_ms=round(call.latency_ms or 0.0, 1))
-        return extreme[0], _sources.to_utc(latest), oid
+        return extreme[0], _sources.to_utc(latest), oid, suspect

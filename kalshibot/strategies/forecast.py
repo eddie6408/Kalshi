@@ -36,6 +36,8 @@ import logging
 from datetime import datetime, timezone
 from dataclasses import dataclass
 
+from .. import data_gates
+from ..alerts import ALERTS, today_key
 from ..coherence import Claim, check as check_coherence
 from ..depth import DepthBook
 from ..edge import contracts_from_kelly, evaluate
@@ -187,10 +189,15 @@ class ForecastStrategy:
     model_free = False
 
     def __init__(self, estimator, fees: FeeModel, cfg: ForecastConfig | None = None,
-                 journal=None):
+                 journal=None, gates: data_gates.GateConfig | None = None,
+                 monitor=None):
         self.estimator = estimator
         self.fees = fees
         self.cfg = cfg or ForecastConfig()
+        #: Package 14A phase 4 data-quality gates. None = not evaluated.
+        self.gates = gates
+        self.monitor = monitor
+        self._checked: set[tuple] = set()
         self.skips: list[Skip] = []
         #: Where forecasts go to be scored later. Every market we price is
         #: recorded, traded or not - scoring only the traded ones would
@@ -318,6 +325,38 @@ class ForecastStrategy:
             claims.append(Claim(m.ticker, lo, hi, est.probability_yes))
         return check_coherence(claims)
 
+    def _record_checks(self, m: Market, ev: dict, result) -> None:
+        """One journal row per distinct forecast (not per market - every
+        strike in a city shares the same forecast), with every gate verdict.
+        This is what the conflict threshold is later fitted from."""
+        key = (m.series_ticker, ev.get("target_date"),
+               tuple(ev.get("provenance_ids") or ()))
+        if key in self._checked:
+            return
+        self._checked.add(key)
+        if len(self._checked) > 5000:
+            self._checked.clear()
+        for v in result.verdicts:
+            log.info("GATE  %s %s %s: %s", v.label, m.series_ticker,
+                     ev.get("target_date"), v.detail)
+        if self.journal is None:
+            return
+        try:
+            self.journal.log_data_check(
+                series=m.series_ticker or "", target_date=str(ev.get("target_date", "")),
+                lead_hours=ev.get("lead_hours"),
+                ensemble_f=ev.get("ensemble_mean_f"),
+                cross_check_f=ev.get("cross_check_f"),
+                diff_f=ev.get("cross_check_diff_f"),
+                forecast_age_seconds=ev.get("forecast_age_seconds"),
+                observation_age_seconds=ev.get("observation_age_seconds"),
+                observation_suspect=ev.get("observation_suspect"),
+                verdicts=[v.label for v in result.verdicts],
+                enforced=result.blocked is not None,
+                provenance=ev.get("provenance_ids"))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("could not record data checks for %s: %s", m.ticker, exc)
+
     def _skip(self, m: Market, reason: str, detail: str = "") -> None:
         self.skips.append(Skip(m.ticker, self.name, reason, detail))
 
@@ -349,6 +388,24 @@ class ForecastStrategy:
                        f"{ev.get('ensemble_members', 0)} members - the spread "
                        f"would be invented, not measured")
             return None
+
+        # --- is the outside data good enough to trade on? (14A phase 4) ---
+        if self.gates is not None:
+            result = data_gates.evaluate(ev, self.gates, self.monitor, self.name)
+            self._record_checks(m, ev, result)
+            blocked = result.blocked
+            if blocked is not None:
+                self._skip(m, blocked.gate.lower().replace("_", " "), blocked.detail)
+                if blocked.gate == "DATA_CONFLICT":
+                    series = m.series_ticker or m.ticker.split("-")[0]
+                    ALERTS.send(
+                        today_key("conflict", series),
+                        f"Data conflict: {series}",
+                        f"{m.ticker}: {blocked.detail}. Not trading this city "
+                        f"until the sources agree. (Further conflicts today are "
+                        f"logged, not alerted.)",
+                        priority="high", tags="warning")
+                return None
 
         if estimate.confidence < self.cfg.min_confidence:
             self._skip(m, "low confidence",
