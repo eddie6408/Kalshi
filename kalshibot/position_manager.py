@@ -94,6 +94,14 @@ class PositionConfig:
     min_hold_minutes_before_stop: float = 20.0
     #: exit when the estimator can no longer price the market at all
     exit_when_blind: bool = True
+    #: A position no forecast strategy owns is a leg of a structural
+    #: (arbitrage) basket. Its payout is guaranteed by the contracts only if
+    #: every leg is held to settlement, so none of the forecast exits below
+    #: apply to it. Until 26 September they did: each leg was sold at the bid
+    #: seconds after it was bought ("no estimator owns this market"), turning
+    #: guaranteed baskets into eight small losses that tripped the circuit
+    #: breaker.
+    hold_unowned_to_settlement: bool = True
     #: refuse to sell below this - a 1c bid is not an exit, it is a donation
     min_exit_price_cents: int = 1
     #: how often to repeat the warning about a position we cannot sell. A
@@ -160,6 +168,8 @@ class PositionConfig:
             min_hold_minutes_before_stop=float(
                 d.get("min_hold_minutes_before_stop", 20.0)),
             exit_when_blind=bool(d.get("exit_when_blind", True)),
+            hold_unowned_to_settlement=bool(
+                d.get("hold_unowned_to_settlement", True)),
             min_exit_price_cents=int(d.get("min_exit_price_cents", 1)),
             stuck_warn_every_minutes=float(
                 d.get("stuck_warn_every_minutes", 30.0)),
@@ -192,6 +202,8 @@ class PositionView:
     confidence: float | None = None
     minutes_to_close: float = float("inf")
     estimate_error: str = ""
+    #: does a forecast strategy own this market? False = a structural leg
+    forecast_owned: bool = True
     #: what the exchange says about the market itself
     market_status: str = ""
     #: the other side of the book, so a mark can be taken at the mid
@@ -413,6 +425,14 @@ class PositionWorker:
             return ExitDecision(
                 ExitReason.AWAITING_SETTLEMENT,
                 f"market is {v.market_status}; waiting for it to resolve")
+
+        # A structural leg is held to settlement: its payout is guaranteed
+        # by the basket, not by any forecast, and selling one leg breaks it.
+        if not v.forecast_owned and self.cfg.hold_unowned_to_settlement:
+            return ExitDecision(
+                ExitReason.HOLD,
+                "structural position (no forecast owns this market) - held "
+                "to settlement, where the basket pays")
 
         # Can we even get out? Everything below assumes a bid to sell into.
         if v.exit_bid_cents is None or v.exit_bid_cents < self.cfg.min_exit_price_cents:
@@ -765,6 +785,10 @@ class PositionWorker:
     def _build_view(self, pos) -> PositionView:
         side = "yes" if pos.contracts > 0 else "no"
         v = PositionView(ticker=pos.ticker, side=side, quantity=abs(pos.contracts))
+        # Decided from the ticker alone, before any lookup that could fail -
+        # a structural leg must not turn into a "blind forecast" and be sold
+        # because the market request timed out.
+        v.forecast_owned = self._strategy_for(v.ticker) is not None
 
         book = self._book(v.ticker)
         if book is not None:

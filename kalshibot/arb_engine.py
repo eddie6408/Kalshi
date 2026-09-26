@@ -594,11 +594,13 @@ class ArbitrageEngine:
         self._halted = True
         self._halt_reason = why
         log.error("RISK  CIRCUIT BREAKER  %s. No new positions will be opened "
-                  "until the bot is restarted. Existing positions are still "
-                  "being managed.", why)
+                  "until the bot is restarted (a consecutive-loss trip also "
+                  "needs scripts/reset_breaker.py first). Existing positions "
+                  "are still being managed.", why)
         ALERTS.send(today_key("circuit_breaker"), "Circuit breaker tripped",
-                    f"{why}. No new positions until the bot is restarted; "
-                    f"existing positions are still managed.",
+                    f"{why}. No new positions until you review it and restart "
+                    f"(START BOT (VPS) offers the reset). Existing positions "
+                    f"are still managed.",
                     priority="urgent", tags="rotating_light")
         return False, f"circuit breaker: {why}"
 

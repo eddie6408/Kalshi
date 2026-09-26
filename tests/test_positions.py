@@ -297,11 +297,11 @@ def test_an_exit_closes_the_journal_entries():
 
 # ===================== robustness =====================
 def test_one_bad_position_does_not_stop_the_others():
-    ex = FakeExec(raise_on={"BAD"})
+    ex = FakeExec(raise_on={"KXFAKE-BAD"})
     w = PositionWorker(
-        FakeMarket({"BAD": book("BAD", yes_bid=60),
+        FakeMarket({"KXFAKE-BAD": book("KXFAKE-BAD", yes_bid=60),
                     "KXFAKE-1": book(yes_bid=62)}),
-        FakePortfolio([Position(ticker="BAD", contracts=5),
+        FakePortfolio([Position(ticker="KXFAKE-BAD", contracts=5),
                        Position(ticker="KXFAKE-1", contracts=25)]),
         ex, [FakeStrategy(FakeEstimator(probability=0.60))], None,
         PositionConfig.from_dict({}))

@@ -508,6 +508,10 @@ positions:
   # Exit when the estimator can no longer price the market. Holding a forecast
   # position with no forecast is hoping, not holding a view.
   exit_when_blind: true
+  # A position no forecast owns is a structural (arbitrage) leg: held to
+  # settlement, never stopped out or sold as "blind". Selling one leg
+  # breaks the basket's guarantee (26 September: 8 legs dumped at the bid).
+  hold_unowned_to_settlement: true
   min_exit_price_cents: 1
   # How often to repeat the warning about a position nobody is bidding on.
   # At a 30s review interval the old behaviour printed the same line 120 times

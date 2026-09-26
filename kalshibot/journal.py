@@ -285,6 +285,15 @@ CREATE TABLE IF NOT EXISTS data_checks (
     provenance TEXT
 );
 
+-- An operator acknowledging a tripped consecutive-loss breaker. Losses
+-- closed before the latest row no longer count toward the run.
+CREATE TABLE IF NOT EXISTS breaker_resets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    losses_at_reset INTEGER,
+    note TEXT
+);
+
 -- What Kalshi says each series settles on, as read from the exchange.
 CREATE TABLE IF NOT EXISTS settlement_sources (
     series TEXT NOT NULL,
@@ -909,7 +918,14 @@ class Journal:
 
         Reads real fills first and falls back to `trades` for the offline
         simulator, which is the only thing that still writes there.
+
+        Only positions closed AFTER the latest breaker reset count. Without
+        that, the run could never end once the breaker tripped: the count
+        reads all history, only a winning close ends a run, and a tripped
+        breaker opens nothing that could win - so a restart re-tripped it on
+        the first check, forever (26 September).
         """
+        since = self.last_breaker_reset() or ""
         closed: list[tuple[str, float]] = []
         flows: dict[tuple[str, str], dict] = {}
         for r in self.conn.execute(
@@ -929,11 +945,11 @@ class Journal:
                 f["g"] += n * px
                 f["last"] = r["ts"] or ""
         for f in flows.values():
-            if f["b"] and f["s"]:
+            if f["b"] and f["s"] and f["last"] > since:
                 matched = min(f["b"], f["s"])
                 closed.append((f["last"],
                                matched * (f["g"] / f["s"] - f["sp"] / f["b"])))
-        if closed:
+        if closed or since:
             closed.sort(key=lambda x: x[0], reverse=True)
             run = 0
             for _ts, pnl in closed:
@@ -953,6 +969,21 @@ class Journal:
             else:
                 break
         return n
+
+    def last_breaker_reset(self) -> str | None:
+        row = self.conn.execute(
+            "SELECT ts FROM breaker_resets ORDER BY id DESC LIMIT 1").fetchone()
+        return row["ts"] if row else None
+
+    def reset_breaker(self, note: str = "") -> int:
+        """The operator has seen the losing run and says: count from here.
+        Returns how many losses in a row there were at the moment of reset."""
+        losses = self.consecutive_losses()
+        self.conn.execute(
+            "INSERT INTO breaker_resets (ts, losses_at_reset, note) VALUES (?,?,?)",
+            (_now(), losses, note[:500]))
+        self.conn.commit()
+        return losses
 
     def log_scan(self, mode: str, counts: dict, seconds: float = 0.0) -> None:
         """One row per scan, so you can always tell a bot that is running and
