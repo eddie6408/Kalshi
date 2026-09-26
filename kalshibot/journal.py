@@ -452,6 +452,11 @@ class Journal:
             "market_yes_bid_cents": "REAL",
             # 14A: the source_observations ids behind this probability.
             "provenance": "TEXT",
+            # Phase B: which model priced it ("ensemble" | "nowcast"), and the
+            # other model's probability for the same contract at the same
+            # moment - so the two can be scored like for like.
+            "model": "TEXT",
+            "alt_probability": "REAL",
         },
         "forecasts": {
             # 14A: which source the forecast came from, the observation ids
@@ -491,7 +496,9 @@ class Journal:
                         target_date: str = "", strike: str = "",
                         lead_hours: float | None = None,
                         traded: bool = False,
-                        provenance: list[int] | None = None) -> None:
+                        provenance: list[int] | None = None,
+                        model: str | None = None,
+                        alt_probability: float | None = None) -> None:
         """Record what we thought, before we know whether it was right.
 
         Written for every market an estimator prices - traded or not. Scoring
@@ -503,8 +510,9 @@ class Journal:
                 """INSERT OR IGNORE INTO probability_log
                    (ts, strategy, estimator, series, ticker, target_date, strike,
                     our_probability, confidence, market_yes_cents,
-                    market_yes_bid_cents, lead_hours, traded, provenance)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    market_yes_bid_cents, lead_hours, traded, provenance,
+                    model, alt_probability)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (_now(), strategy, estimator, series, ticker, target_date, strike,
                  float(our_probability),
                  None if confidence is None else float(confidence),
@@ -512,7 +520,8 @@ class Journal:
                  None if market_yes_bid_cents is None
                  else float(market_yes_bid_cents),
                  None if lead_hours is None else float(lead_hours),
-                 1 if traded else 0, _ids(provenance)),
+                 1 if traded else 0, _ids(provenance), model,
+                 None if alt_probability is None else float(alt_probability)),
             )
             self.conn.commit()
         except sqlite3.Error as exc:

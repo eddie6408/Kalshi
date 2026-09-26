@@ -210,7 +210,7 @@ def test_the_dashboard_panel_uses_the_same_numbers_as_the_gate():
                    market_yes_bid_cents, lead_hours)
                    VALUES (?, 'forecast:weather_temperature', 'weather_temperature',
                            ?, ?, ?, ?, ?, ?, ?)""",
-                (f"2026-09-25T{i:08d}", r["series"], r["ticker"], r["our_probability"],
+                (f"2099-01-01T{i:08d}", r["series"], r["ticker"], r["our_probability"],
                  r["settled_yes"], r["market_yes_cents"], r["market_yes_bid_cents"],
                  r["lead_hours"]))
         j.conn.commit()

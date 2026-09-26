@@ -218,6 +218,26 @@ weather:
     - icon_seamless
     - ecmwf_ifs025
 
+  # Same-day nowcast (kalshibot/nowcast.py, phase B). For a market whose day
+  # is TODAY and within max_lead_hours of its end, the high is priced as
+  #     max(highest reading so far - observation_margin_f,
+  #         peak of the remaining HRRR hours + today's model error)
+  # with sigma = sigma_base_f + sigma_per_hour_f * hours until that peak.
+  # Starting values, not fitted yet: the market-skill gate keeps it from
+  # trading until it has shown it beats the market. The ensemble probability
+  # is logged beside it (probability_log.alt_probability) for comparison.
+  nowcast:
+    enabled: true
+    max_lead_hours: 12
+    bias_window_hours: 3
+    min_obs_for_bias: 2
+    max_bias_correction_f: 4.0
+    sigma_base_f: 0.8
+    sigma_per_hour_f: 0.35
+    sigma_max_f: 4.0
+    # Station readings ran 0.4-0.8F warm of the official report (2026-09-24).
+    observation_margin_f: 1.0
+
   # Extra uncertainty (deg F) added on top of the raw ensemble spread to
   # account for model bias and the fact that the ensemble grid point is not
   # literally the settlement thermometer. Tuned later from your own journal.
@@ -640,7 +660,9 @@ market_skill:
   # ahead      - only where the model has SHOWN it beats the market (earn it)
   # not_behind - anywhere it is not significantly worse
   require: ahead
-  since: "2026-09-21"
+  # Phase B made same-day pricing a different forecaster (the nowcast), so
+  # its record starts at deployment; the ensemble's 0-6h record is not its.
+  since: "2026-09-26T08:00:00"
   min_contracts: 15
   # "Significantly" = more than `margin` Brier points, at `z` standard errors
   # computed across contracts.
@@ -894,6 +916,16 @@ sources:
       # Model runs are 6-12 h apart and published hours after they start;
       # ECMWF's newest run is routinely 18-24 h old. Older than this is stale.
       max_data_age_seconds: 129600
+
+    open_meteo_hrrr:
+      publisher: "Open-Meteo, redistributing NOAA HRRR (3 km, hourly runs)"
+      tier: 2
+      roles: [primary]
+      endpoint: "https://api.open-meteo.com/v1/forecast"
+      fallback_to: open_meteo_ensemble
+      # Runs hourly and publishes ~1.5h after the run starts.
+      max_data_age_seconds: 14400
+      notes: "Same-day nowcast (kalshibot/nowcast.py). If it is missing the ensemble prices the market."
 
     open_meteo_model_runs:
       publisher: "Open-Meteo (model run metadata)"

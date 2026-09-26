@@ -20,6 +20,7 @@ import math
 import re
 from zoneinfo import ZoneInfo
 
+from .. import nowcast as _nowcast
 from ..models import Market
 from ..weatherdata import DailyTempForecast, WeatherData
 from .base import Estimate
@@ -31,6 +32,11 @@ MONTHS = {m: i + 1 for i, m in enumerate(
 
 # KXHIGHNY-25SEP12-B72.5  ->  (25, SEP, 12)
 DATE_RE = re.compile(r"-(\d{2})([A-Z]{3})(\d{2})")
+
+
+def _to_utc(value):
+    from ..sources import to_utc
+    return to_utc(value)
 
 
 def _norm_cdf(x: float) -> float:
@@ -58,6 +64,10 @@ class WeatherTemperatureEstimator:
         self.fallback_sigma = {
             int(k): float(v) for k, v in (self.cfg.get("fallback_sigma_by_lead_hours") or {}).items()
         }
+        #: Same-day nowcast (kalshibot/nowcast.py): observations so far plus
+        #: the hourly HRRR, corrected against today's readings. Used for
+        #: same-day markets within nowcast.max_lead_hours of the end of day.
+        self.nowcast_cfg = _nowcast.NowcastConfig.from_dict(self.cfg.get("nowcast"))
 
     # ------------------------------------------------------------------
     def candidate_series(self) -> list[str]:
@@ -256,9 +266,13 @@ class WeatherTemperatureEstimator:
         if fc is None:
             return Estimate.skip("no forecast data available", self.name)
 
-        prob = self._probability_in_range(fc, lo, hi)
-        prob = min(0.995, max(0.005, prob))     # never claim certainty
-        conf = self._confidence(fc, prob)
+        ens_prob = min(0.995, max(0.005, self._probability_in_range(fc, lo, hi)))
+        prob, conf, model = ens_prob, self._confidence(fc, ens_prob), "ensemble"
+        nc, hm = self._nowcast(cfg, fc, target, tz_name)
+        if nc is not None:
+            prob = min(0.995, max(0.005, nc.probability_between(lo, hi)))
+            conf = self._nowcast_confidence(nc)
+            model = "nowcast"
 
         now = dt.datetime.now(dt.timezone.utc)
 
@@ -281,7 +295,9 @@ class WeatherTemperatureEstimator:
                 "strike": label,
                 "ensemble_members": fc.n_members,
                 "source": fc.source,
-                "degraded_source": fc.degraded,
+                # The nowcast does not use the ensemble; a degraded ensemble
+                # only matters when the ensemble is what priced it.
+                "degraded_source": fc.degraded if model == "ensemble" else False,
                 "ensemble_mean_f": round(fc.mean, 2),
                 "ensemble_spread_f": round(fc.spread, 2),
                 "sigma_used_f": round(self._sigma(fc), 2),
@@ -291,7 +307,11 @@ class WeatherTemperatureEstimator:
                 # Ids point at journal source_observations rows. Ages are at
                 # the moment of THIS estimate, so a cached forecast shows its
                 # real age rather than looking freshly fetched.
-                "provenance_ids": list(fc.provenance),
+                "provenance_ids": (list(fc.provenance)
+                                   + ([fc.observation_provenance_id]
+                                      if fc.observation_provenance_id is not None else [])
+                                   + ([hm.provenance_id]
+                                      if nc is not None and hm.provenance_id is not None else [])),
                 "data_retrieved_at": _iso(fc.retrieved_at),
                 "fetch_age_seconds": _age(fc.retrieved_at),
                 "forecast_published_at": _iso(fc.data_time),
@@ -304,5 +324,52 @@ class WeatherTemperatureEstimator:
                 "cross_check_f": (round(fc.cross_check_f, 2)
                                   if fc.cross_check_f is not None else None),
                 "cross_check_diff_f": cross_diff,
+                # ---- which model priced this, and what the other one said.
+                # Both are logged on every contract so the nowcast can be
+                # scored against the ensemble it replaced, like for like.
+                "model": model,
+                "alt_model": "ensemble" if model == "nowcast" else None,
+                "alt_probability": round(ens_prob, 4) if model == "nowcast" else None,
+                "nowcast": ({
+                    "observed_f": nc.observed_extreme, "bound_f": nc.bound,
+                    "remaining_mean_f": (round(nc.mean, 2) if nc.mean is not None else None),
+                    "sigma_f": round(nc.sigma, 2), "bias_f": round(nc.bias_f, 2),
+                    "bias_samples": nc.bias_samples,
+                    "hours_to_peak": round(nc.hours_to_peak, 2),
+                    "remaining_hours": nc.remaining_hours, "peak_time": nc.peak_time,
+                    "hrrr_run": hm.run, "hrrr_released": hm.released,
+                    "hrrr_age_seconds": _age(_to_utc(hm.released)),
+                    "notes": nc.notes,
+                } if nc is not None else None),
             },
         )
+
+    # ------------------------------------------------------------------
+    def _nowcast(self, cfg: dict, fc: DailyTempForecast, target: dt.date,
+                 tz_name: str):
+        """(Nowcast, HourlyModel) for a same-day market close to its end, or
+        (None, None) - in which case the ensemble prices it, as before."""
+        nc_cfg = self.nowcast_cfg
+        if not nc_cfg.enabled or fc.lead_hours > nc_cfg.max_lead_hours:
+            return None, None
+        now_local = dt.datetime.now(ZoneInfo(tz_name))
+        if now_local.date() != target:
+            return None, None
+        fetch = getattr(self.data, "hourly_model", None)
+        if not callable(fetch):
+            return None, None            # e.g. the offline simulator
+        hm = fetch(cfg["latitude"], cfg["longitude"], tz_name)
+        if hm is None or not hm.hours:
+            return None, None
+        nc = _nowcast.compute(now_local, target, fc.kind, fc.observations,
+                              hm.hours, nc_cfg)
+        return (nc, hm) if nc is not None else (None, None)
+
+    @staticmethod
+    def _nowcast_confidence(nc) -> float:
+        """Trust the nowcast more once it has been checked against today's
+        readings and the peak is close; never as much as certainty."""
+        base = 0.85 if nc.bias_samples >= 2 else 0.70
+        if nc.mean is not None and nc.hours_to_peak > 6:
+            base *= 0.85
+        return base

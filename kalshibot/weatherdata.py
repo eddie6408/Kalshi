@@ -12,6 +12,7 @@ retrieved it. Recording never changes what is returned.
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import json
 import logging
@@ -46,6 +47,38 @@ MODEL_RUN_METADATA = {
 }
 MODEL_RUN_CACHE_SECONDS = 600
 
+#: NOAA HRRR, 3 km, re-run every hour - the model the same-day nowcast
+#: (kalshibot/nowcast.py) is built on. Through Open-Meteo, which also serves
+#: the past hours, so the model can be checked against today's readings.
+HRRR_URL = "https://api.open-meteo.com/v1/forecast"
+HRRR_MODEL = "gfs_hrrr"
+HRRR_META_URL = "https://api.open-meteo.com/data/ncep_hrrr_conus/static/meta.json"
+HRRR_CACHE_SECONDS = 600
+
+#: Station readings are re-read this often, independently of the forecast
+#: cache. They used to ride along with a 30-minute forecast, so the live
+#: "high so far" could be half an hour old at exactly the moment it matters.
+OBS_REFRESH_SECONDS = 300
+
+
+@dataclass
+class HourlyModel:
+    """Hourly model temperatures for a point, in the station's time zone."""
+    hours: list = field(default_factory=list)      # [(aware datetime, deg F)]
+    run: str | None = None                         # initialisation time
+    released: str | None = None                    # when it was published
+    provenance_id: int | None = None
+
+
+@dataclass
+class _Obs:
+    extreme: float | None = None
+    latest: dt.datetime | None = None
+    provenance_id: int | None = None
+    suspect: str = ""
+    #: readings fit to model from: bad-QC readings and a lone spike removed
+    clean: list = field(default_factory=list)       # [(aware datetime, deg F)]
+
 
 def _epoch_iso(value) -> str | None:
     try:
@@ -76,6 +109,12 @@ class DailyTempForecast:
     observation_time: dt.datetime | None = None
     #: why that observed extreme should not be trusted ("" = no reason found)
     observation_suspect: str = ""
+    #: today's usable station readings, [(aware local datetime, deg F)]
+    observations: list = field(default_factory=list)
+    #: provenance id of the observation fetch (kept apart from the forecast's)
+    observation_provenance_id: int | None = None
+    #: time.monotonic() of the last observation read; None = never
+    observations_read_at: float | None = None
     #: independent second opinion (14A redundancy). Recorded, not acted on.
     cross_check_f: float | None = None
     cross_check_source: str = ""
@@ -127,6 +166,12 @@ class _Cache:
     def put(self, key, value):
         self._store[key] = (time.time(), value)
 
+    def replace(self, key, value):
+        """Swap the value but keep its age, so refreshing the observations
+        never extends how long the forecast itself is served."""
+        hit = self._store.get(key)
+        self._store[key] = ((hit[0] if hit else time.time()), value)
+
 
 class WeatherData:
     def __init__(self, ensemble_models: list[str] | None = None, cache_seconds: int = 1800,
@@ -151,6 +196,8 @@ class WeatherData:
         #: acts on a disagreement until 14A phase 4.
         self.cross_check = bool(cross_check)
         self._model_runs: tuple[float, dict] | None = None
+        self.obs_refresh_seconds = OBS_REFRESH_SECONDS
+        self._hrrr: dict = {}
 
     # ------------------------------------------------------------------
     def daily_extreme_forecast(
@@ -158,38 +205,101 @@ class WeatherData:
         target_date: dt.date, kind: str = "high", station: str | None = None,
     ) -> DailyTempForecast | None:
         key = (round(latitude, 3), round(longitude, 3), tz_name, target_date.isoformat(), kind)
-        cached = self.cache.get(key)
-        if cached is not None:
-            return cached
-
-        fc = self._from_ensemble(latitude, longitude, tz_name, target_date, kind)
+        fc = self.cache.get(key)
         if fc is None:
-            fc = self._from_nws(latitude, longitude, tz_name, target_date, kind)
-        elif self.cross_check:
-            second = self._from_nws(latitude, longitude, tz_name, target_date, kind)
-            if second is not None:
-                fc.cross_check_f = second.mean
-                fc.cross_check_source = second.source
-                fc.cross_check_data_time = second.data_time
-                fc.provenance.extend(second.provenance)
-        if fc is None:
-            return None
+            fc = self._from_ensemble(latitude, longitude, tz_name, target_date, kind)
+            if fc is None:
+                fc = self._from_nws(latitude, longitude, tz_name, target_date, kind)
+            elif self.cross_check:
+                second = self._from_nws(latitude, longitude, tz_name, target_date, kind)
+                if second is not None:
+                    fc.cross_check_f = second.mean
+                    fc.cross_check_source = second.source
+                    fc.cross_check_data_time = second.data_time
+                    fc.provenance.extend(second.provenance)
+            if fc is None:
+                return None
+            self.cache.put(key, fc)
 
-        if station:
-            obs, obs_time, obs_id, suspect = self._observed_extreme(
-                station, tz_name, target_date, kind)
-            fc.observed_extreme_so_far = obs
-            fc.observation_time = obs_time
-            fc.observation_suspect = suspect
-            if obs_id is not None:
-                fc.provenance.append(obs_id)
+        # Readings on their own, shorter clock. A copy, so a caller holding
+        # the previous forecast never sees it change underneath it.
+        if station and (fc.observations_read_at is None or time.monotonic()
+                        - fc.observations_read_at >= self.obs_refresh_seconds):
+            fc = dataclasses.replace(fc, provenance=list(fc.provenance))
+            obs = self._observations(station, tz_name, target_date, kind)
+            fc.observed_extreme_so_far = obs.extreme
+            fc.observation_time = obs.latest
+            fc.observation_suspect = obs.suspect
+            fc.observations = obs.clean
+            fc.observation_provenance_id = obs.provenance_id
+            fc.observations_read_at = time.monotonic()
+            self.cache.replace(key, fc)
 
+        # Lead time is relative to NOW; a cached value is wrong by the cache age.
         tz = ZoneInfo(tz_name)
         end_of_day = dt.datetime.combine(target_date, dt.time(23, 59), tzinfo=tz)
-        fc.lead_hours = max(0.0, (end_of_day - dt.datetime.now(tz)).total_seconds() / 3600.0)
+        lead = max(0.0, (end_of_day - dt.datetime.now(tz)).total_seconds() / 3600.0)
+        return dataclasses.replace(fc, lead_hours=lead)
 
-        self.cache.put(key, fc)
-        return fc
+    # ------------------------------------------------------------------
+    def hourly_model(self, lat: float, lon: float, tz_name: str) -> HourlyModel | None:
+        """HRRR hourly temperatures around now: 12 hours back, 30 ahead."""
+        key = (round(lat, 3), round(lon, 3), tz_name)
+        hit = self._hrrr.get(key)
+        if hit and time.monotonic() - hit[0] < HRRR_CACHE_SECONDS:
+            return hit[1]
+        params = {"latitude": lat, "longitude": lon, "hourly": "temperature_2m",
+                  "models": HRRR_MODEL, "temperature_unit": "fahrenheit",
+                  "timezone": tz_name, "past_hours": 12, "forecast_hours": 30}
+        retrieved_at = dt.datetime.now(dt.timezone.utc)
+        try:
+            with self.monitor.track("open_meteo_hrrr") as call:
+                r = self._session.get(HRRR_URL, params=params, timeout=self.timeout)
+                call.status = r.status_code
+                r.raise_for_status()
+                payload = r.json()
+                if isinstance(payload, dict) and payload.get("error"):
+                    call.ok = False
+                    call.error = str(payload.get("reason") or "error")
+                    return None
+                hourly = payload.get("hourly") or {}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("HRRR unavailable: %s", exc)
+            return None
+        tz = ZoneInfo(tz_name)
+        hours = []
+        for t, v in zip(hourly.get("time") or [], hourly.get("temperature_2m") or []):
+            if v is None:
+                continue
+            try:
+                hours.append((dt.datetime.fromisoformat(t).replace(tzinfo=tz), float(v)))
+            except ValueError:
+                continue
+        if not hours:
+            self.monitor.record("open_meteo_hrrr", False, error="no usable hours")
+            return None
+        run = released = None
+        try:
+            with self.monitor.track("open_meteo_model_runs") as call:
+                m = self._session.get(HRRR_META_URL, timeout=self.timeout)
+                call.status = m.status_code
+                m.raise_for_status()
+                meta = m.json()
+                run = _epoch_iso(meta.get("last_run_initialisation_time"))
+                released = _epoch_iso(meta.get("last_run_availability_time"))
+                call.data_time = released
+        except Exception as exc:  # noqa: BLE001
+            log.debug("HRRR run metadata unavailable: %s", exc)
+        oid = self.monitor.observe(
+            "open_meteo_hrrr", data_type="hourly_forecast_f", subject=f"{lat},{lon}",
+            value_json={"model": HRRR_MODEL, "first": hours[0][0].isoformat(),
+                        "last": hours[-1][0].isoformat(),
+                        "values_f": [round(v, 1) for _t, v in hours]},
+            data_time=released, data_vintage={HRRR_MODEL: {"run": run, "released": released}},
+            retrieved_at=retrieved_at.isoformat())
+        model = HourlyModel(hours, run, released, oid)
+        self._hrrr[key] = (time.monotonic(), model)
+        return model
 
     # ------------------------------------------------------------------
     def _from_ensemble(self, lat, lon, tz_name, target_date, kind) -> DailyTempForecast | None:
@@ -400,6 +510,11 @@ class WeatherData:
     def _observed_extreme(self, station: str, tz_name: str, target_date: dt.date,
                           kind: str) -> tuple[float | None, dt.datetime | None,
                                               int | None, str]:
+        o = self._observations(station, tz_name, target_date, kind)
+        return o.extreme, o.latest, o.provenance_id, o.suspect
+
+    def _observations(self, station: str, tz_name: str, target_date: dt.date,
+                      kind: str) -> _Obs:
         """(extreme so far, newest observation time, provenance id, suspect).
 
         `suspect` names a reason not to trust the extreme - an NWS quality
@@ -409,7 +524,7 @@ class WeatherData:
         tz = ZoneInfo(tz_name)
         now_local = dt.datetime.now(tz)
         if now_local.date() != target_date:
-            return None, None, None, ""
+            return _Obs()
         start = dt.datetime.combine(target_date, dt.time(0, 0), tzinfo=tz)
         url = NWS_OBS.format(station=station)
         retrieved_at = dt.datetime.now(dt.timezone.utc)
@@ -428,7 +543,7 @@ class WeatherData:
                 call.data_time = max(stamps) if stamps else None
         except Exception as exc:  # noqa: BLE001
             log.warning("NWS observations for %s failed: %s", station, exc)
-            return None, None, None, ""
+            return _Obs()
 
         readings = []           # (deg F, timestamp, qc flag)
         for f in feats:
@@ -439,7 +554,7 @@ class WeatherData:
                 readings.append((float(v) * 9 / 5 + 32, props.get("timestamp"),
                                  temp.get("qualityControl")))
         if not readings:
-            return None, None, None, ""
+            return _Obs()
         pick = max if kind == "high" else min
         extreme = pick(readings, key=lambda x: x[0])
         latest = max((x[1] for x in readings if x[1]), default=None)
@@ -464,4 +579,17 @@ class WeatherData:
                         "suspect": suspect or None},
             data_time=latest, retrieved_at=retrieved_at.isoformat(),
             latency_ms=round(call.latency_ms or 0.0, 1))
-        return extreme[0], _sources.to_utc(latest), oid, suspect
+        # What the nowcast fits to: nothing NWS rejected, and not a lone spike.
+        clean = []
+        for v, t, flag in readings:
+            if str(flag) in BAD_QC_FLAGS or not t:
+                continue
+            when = _sources.to_utc(t)
+            if when is None:
+                continue
+            clean.append((when.astimezone(tz), v))
+        if suspect and "spike" in suspect and clean:
+            worst = (max if kind == "high" else min)(clean, key=lambda x: x[1])
+            clean.remove(worst)
+        clean.sort()
+        return _Obs(extreme[0], _sources.to_utc(latest), oid, suspect, clean)

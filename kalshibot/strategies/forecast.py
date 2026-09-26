@@ -284,6 +284,8 @@ class ForecastStrategy:
                 lead_hours=ev.get("lead_hours"),
                 traded=traded,
                 provenance=ev.get("provenance_ids"),
+                model=ev.get("model"),
+                alt_probability=ev.get("alt_probability"),
             )
             # The distribution behind the probability, for the second kind of
             # scoring: was the mean right, was sigma wide enough.

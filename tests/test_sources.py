@@ -90,6 +90,7 @@ def test_the_registry_describes_the_endpoints_the_code_really_calls():
     assert reg.get("kalshi_live_market_data").endpoint == livebooks.LIVE_MARKET_DATA_BASE
     assert reg.get("open_meteo_ensemble").endpoint == weatherdata.ENSEMBLE_URL
     assert reg.get("open_meteo_model_runs").endpoint == weatherdata.MODEL_META_URL
+    assert reg.get("open_meteo_hrrr").endpoint == weatherdata.HRRR_URL
     assert reg.get("nws_observations").endpoint == weatherdata.NWS_OBS
     assert reg.get("nws_climate_report").endpoint == forecast_scoring.CLI_LIST_URL
 
