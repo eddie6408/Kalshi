@@ -29,6 +29,7 @@ from .settlement import settle_forecasts
 from .strategies.forecast import ForecastConfig, ForecastStrategy
 
 from .data_gates import GateConfig
+from .market_skill import MarketSkillConfig, MarketSkillGate
 from .alerts import ALERTS, today_key
 from .sources import MONITOR
 
@@ -203,10 +204,14 @@ class ArbitrageEngine:
                           name, sorted(ESTIMATORS))
                 continue
             try:
+                ms_cfg = MarketSkillConfig.from_dict(settings.section("market_skill"))
                 out.append(ForecastStrategy(
                     factory(settings), fees, cfg, journal=journal,
                     gates=GateConfig.from_dict(settings.get("sources.gates")),
-                    monitor=MONITOR))
+                    monitor=MONITOR,
+                    market_skill=(MarketSkillGate(journal, ms_cfg, estimator=name)
+                                  if journal is not None and ms_cfg.enabled
+                                  else None)))
                 log.info("FORECAST  %s registered", name)
             except Exception as exc:  # noqa: BLE001
                 log.error("FORECAST  %s failed to start: %s", name, exc)
@@ -838,6 +843,7 @@ class ArbitrageEngine:
             report.trades.append(result)
             self.trade_times.append(datetime.now(timezone.utc))
             if result.outcome in (TradeOutcome.COMPLETE,
+                                  TradeOutcome.PARTIAL_FILLED,
                                   TradeOutcome.PARTIAL_EXPOSED):
                 self.exposure_usd += result.total_cost_usd
                 # The exchange will not show this position for a few seconds.

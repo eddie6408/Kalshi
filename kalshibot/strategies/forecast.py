@@ -190,13 +190,16 @@ class ForecastStrategy:
 
     def __init__(self, estimator, fees: FeeModel, cfg: ForecastConfig | None = None,
                  journal=None, gates: data_gates.GateConfig | None = None,
-                 monitor=None):
+                 monitor=None, market_skill=None):
         self.estimator = estimator
         self.fees = fees
         self.cfg = cfg or ForecastConfig()
         #: Package 14A phase 4 data-quality gates. None = not evaluated.
         self.gates = gates
         self.monitor = monitor
+        #: Does the model beat the market for this city and lead time?
+        #: (kalshibot/market_skill.py) None = not checked.
+        self.market_skill = market_skill
         self._checked: set[tuple] = set()
         self.skips: list[Skip] = []
         #: Where forecasts go to be scored later. Every market we price is
@@ -412,6 +415,16 @@ class ForecastStrategy:
                         f"until the sources agree. (Further conflicts today are "
                         f"logged, not alerted.)",
                         priority="high", tags="warning")
+                return None
+
+        # --- does the model beat the market here? -------------------------
+        # Checked before any edge is computed: an "edge" measured by a model
+        # the market out-forecasts is the model's error, not the market's.
+        if self.market_skill is not None:
+            ok, why = self.market_skill.may_enter(
+                m.series_ticker or m.ticker.split("-")[0], lead)
+            if not ok:
+                self._skip(m, "market forecasts better here", why)
                 return None
 
         if estimate.confidence < self.cfg.min_confidence:

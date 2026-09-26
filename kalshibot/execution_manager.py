@@ -51,6 +51,11 @@ class TradeOutcome(str, Enum):
     COMPLETE = "COMPLETE"
     PARTIAL_RECOVERED = "PARTIAL_RECOVERED"
     PARTIAL_EXPOSED = "PARTIAL_EXPOSED"
+    #: A single-leg order that filled in part. The remainder was cancelled and
+    #: what filled is simply a smaller position: one leg has nothing to hedge.
+    #: Until 26 September this was reported PARTIAL_EXPOSED, "unhedged -
+    #: MANUAL REVIEW", for a forecast trade that was never a hedge.
+    PARTIAL_FILLED = "PARTIAL_FILLED"
     ABORTED_PRE_TRADE = "ABORTED_PRE_TRADE"
     FAILED = "FAILED"
 
@@ -330,6 +335,17 @@ class ExecutionManager:
             result.outcome = TradeOutcome.ABORTED_PRE_TRADE
             result.notes.append("nothing filled, no exposure taken")
             log.info("TRADE RECOVERY OK    nothing filled")
+            return
+
+        # One leg: nothing to hedge and nothing to unwind. Selling back what
+        # filled would pay the spread to undo a trade the strategy wanted.
+        if len(result.legs) == 1:
+            lx = filled_legs[0]
+            result.outcome = TradeOutcome.PARTIAL_FILLED
+            result.notes.append(f"single leg: kept {lx.filled} of {lx.requested}; "
+                                f"nothing to hedge")
+            log.info("TRADE PARTIAL FILL   %s kept %d of %d - single leg, "
+                     "nothing to hedge", lx.leg.ticker, lx.filled, lx.requested)
             return
 
         if not self.attempt_unwind:

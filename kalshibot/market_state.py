@@ -151,7 +151,7 @@ class MarketState:
             if entry is not None:
                 if not entry.trusted:
                     self.stats.book_untrusted += 1
-                elif entry.age_seconds() > limit:
+                elif limit <= 0 or entry.age_seconds() > limit:
                     self.stats.book_stale += 1
                 else:
                     self._books.move_to_end(ticker)
@@ -171,7 +171,10 @@ class MarketState:
         limit = self.max_market_age if max_age is None else max_age
         with self._lock:
             entry = self._markets.get(ticker)
-            if entry is not None and entry.age_seconds() <= limit:
+            # A limit of zero means never serve from the cache. Checked
+            # explicitly: two reads in the same microsecond age 0.0,
+            # which is not > 0, and a flaky self-test once said so.
+            if entry is not None and limit > 0 and entry.age_seconds() <= limit:
                 self._markets.move_to_end(ticker)
                 self.stats.market_hits += 1
                 return entry.market
@@ -209,7 +212,7 @@ class MarketState:
                 elif not entry.trusted:
                     self.stats.book_untrusted += 1
                     misses.append(ticker)
-                elif entry.age_seconds() > limit:
+                elif limit <= 0 or entry.age_seconds() > limit:
                     self.stats.book_stale += 1
                     misses.append(ticker)
                 else:

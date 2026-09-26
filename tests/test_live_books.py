@@ -156,3 +156,45 @@ def test_the_miss_rate_is_reported():
     c = LiveBookMarketClient(FakeDemo(), FakeReader({"T-1": "B"}))
     c.get_depth("T-1"); c.get_depth("T-2")
     assert "1 read" in c.summary() and "1 not listed" in c.summary()
+
+
+class _PayloadSession:
+    """Serves one orderbook payload to LiveBookReader._get."""
+
+    def __init__(self, payload):
+        self.payload, self.headers = payload, {}
+
+    def get(self, url, params=None, timeout=None):
+        payload = self.payload
+
+        class R:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return payload
+        return R()
+
+
+def test_the_current_orderbook_fp_format_is_read():
+    """Production moved to orderbook_fp with dollar strings. Reading only the
+    legacy shape made every live book look empty and silenced the execution
+    probe for days (26 September). This is the payload production returned."""
+    from kalshibot.livebooks import LiveBookReader
+    r = LiveBookReader()
+    r._session = _PayloadSession({"orderbook_fp": {
+        "no_dollars": [["0.9500", "20.00"], ["0.9900", "8667.47"]],
+        "yes_dollars": []}})
+    book = r.orderbook("KXHIGHNY-26SEP26-T69")
+    assert book is not None
+    assert book.best_price("yes", "buy") == 1          # 99c NO bid -> 1c YES ask
+    assert book.best_price("no", "sell") == 99
+
+
+def test_a_quiet_current_format_book_is_still_none():
+    from kalshibot.livebooks import LiveBookReader
+    r = LiveBookReader()
+    r._session = _PayloadSession({"orderbook_fp": {"no_dollars": [], "yes_dollars": []}})
+    assert r.orderbook("KXHIGHNY-26SEP26-T69") is None

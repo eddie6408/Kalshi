@@ -622,6 +622,32 @@ calibration:
   # while it earns its record - the lenient posture above.
   unproven_may_trade: true
 
+# Does the model beat the MARKET, per city and lead time? (kalshibot/market_skill.py)
+#
+# The calibration gate above compares against climatology - the minimum bar
+# for knowing anything. Making money needs a higher one: our probability has
+# to be closer to the outcome than the price we trade against. On 26 September,
+# 0-6h before close, it was not (Brier 0.127 vs the market's 0.070 over 59
+# contracts) while the gate above said CALIBRATED and the strategy was $144
+# down.
+#
+# Scored per contract, not per row. A city with fewer than min_contracts
+# inherits the all-cities verdict at the same lead time. Blocked markets are
+# still priced and logged, so the record keeps growing and the strategy can
+# earn its way back in. Exits are never gated.
+market_skill:
+  enabled: true
+  # ahead      - only where the model has SHOWN it beats the market (earn it)
+  # not_behind - anywhere it is not significantly worse
+  require: ahead
+  since: "2026-09-21"
+  min_contracts: 15
+  # "Significantly" = more than `margin` Brier points, at `z` standard errors
+  # computed across contracts.
+  margin: 0.005
+  z: 2.0
+  refresh_seconds: 300
+
 # One shared view of the exchange, read by the scan and the position worker
 # alike. Before this each loop asked REST for what it needed, so the two could
 # be looking at different prices for the same market in the same second - and

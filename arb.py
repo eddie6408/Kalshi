@@ -539,23 +539,38 @@ def main() -> int:
         def probe_pass():
             tickers = list(state.hot_tickers(probe_n)) if state else []
             if not tickers:
+                log.info("PROBE  nothing to compare yet (no markets priced)")
                 return
             done = 0
+            # Why a pass recorded nothing. A probe that says nothing when it
+            # finds nothing hid a parsing bug for days; it says why now.
+            why = {"error": 0, "live empty": 0, "demo empty": 0, "one-sided": 0}
             for ticker in tickers[:probe_n]:
                 try:
                     demo_book = market.get_depth(ticker)
                     live_book = probe_reader.orderbook(ticker)
                 except Exception as exc:  # noqa: BLE001
                     log.debug("PROBE  %s: %s", ticker, exc)
+                    why["error"] += 1
                     continue
+                if live_book is None:
+                    why["live empty"] += 1
+                    continue
+                if demo_book is None or not (demo_book.yes_bids or demo_book.no_bids):
+                    why["demo empty"] += 1
+                    continue
+                before = done
                 for side in ("yes", "no"):
                     row = compare(ticker, demo_book, live_book,
                                   size=probe_size, side=side, action="buy")
                     if row:
                         journal.log_book_quality(row)
                         done += 1
-            if done:
-                log.info("PROBE  compared %d book(s) demo vs live", done)
+                if done == before:
+                    why["one-sided"] += 1
+            skipped = ", ".join(f"{n} {k}" for k, n in why.items() if n)
+            log.info("PROBE  compared %d book side(s) demo vs live%s", done,
+                     f"; skipped: {skipped}" if skipped else "")
 
         supervisor.add(Worker(
             WorkerConfig.from_dict("execution_probe",

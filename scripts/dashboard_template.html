@@ -183,6 +183,10 @@
     <div id="scans"></div>
   </div>
 
+  <h2>Does it beat the market?</h2>
+  <p class="chart-note" id="mskill-note"></p>
+  <div class="card"><div id="mskill"></div></div>
+
   <h2>Where does the data come from?</h2>
   <p class="chart-note">Every outside source the bot reads, who publishes it, how
     authoritative it is (tier 1 = the organisation responsible for the
@@ -630,6 +634,37 @@ function renderHealth(){
          "forecasts whose market has not resolved");
 }
 
+// ------------------------------------------------------- model vs market
+function renderMarketSkill(){
+  const m = DATA.market_skill || {};
+  const host = document.getElementById("mskill");
+  const note = document.getElementById("mskill-note");
+  if (m.error){ host.innerHTML = `<p class="empty">Unavailable: ${esc(m.error)}</p>`; return; }
+  const rows = m.cells || [];
+  note.innerHTML = `Squared error of our probability against the market's price, on the
+    same settled contracts (lower is better), since ${esc(m.since || "the start")}. Scored per
+    contract, not per re-pricing. <b>${m.require === "ahead"
+      ? "New forecast entries are allowed only where the model is AHEAD."
+      : "New forecast entries are blocked only where the model is BEHIND."}</b>
+    A city with fewer than ${m.min_contracts} contracts uses the ALL row for its lead time.`;
+  if (!rows.length){ host.innerHTML = '<p class="empty">No settled forecasts with a market price yet.</p>'; return; }
+  const cls = v => v === "AHEAD" ? "pos" : (v === "BEHIND" ? "neg" : "");
+  host.innerHTML = `<table><thead><tr>
+      <th>Lead</th><th>City</th><th>Verdict</th><th class="num">Ours</th>
+      <th class="num">Market</th><th class="num">Gap</th><th class="num">z</th>
+      <th class="num">Contracts</th><th class="num">True mid</th>
+    </tr></thead><tbody>${rows.map(r => `<tr${r.series === "ALL" ? ' style="font-weight:600"' : ""}>
+      <td>${esc(r.bucket)}</td><td class="t">${esc(r.series)}</td>
+      <td class="${cls(r.verdict)}"><b>${esc(r.verdict)}</b></td>
+      <td class="num">${r.ours.toFixed(3)}</td><td class="num">${r.market.toFixed(3)}</td>
+      <td class="num ${r.diff > 0 ? "neg" : "pos"}">${r.diff > 0 ? "+" : ""}${r.diff.toFixed(3)}</td>
+      <td class="num">${r.z == null ? "&mdash;" : (r.z > 0 ? "+" : "") + r.z.toFixed(1)}</td>
+      <td class="num">${r.contracts}</td>
+      <td class="num">${Math.round(r.mid_share * 100)}%</td></tr>`).join("")}</tbody></table>
+    <p class="chart-note" style="margin:10px 0 0">Gap &gt; 0: the market was closer to the
+    outcome than we were. z is the gap in standard errors across contracts.</p>`;
+}
+
 // ------------------------------------------------------- sources (14A)
 function renderSources(){
   const rows = DATA.sources || [];
@@ -752,7 +787,7 @@ document.getElementById("stamp").textContent =
 renderRegime(); renderTiles(); renderReliability(); renderSeries();
 renderLead(); renderBias();
 renderRejects(); renderMoney(); renderOpen(); renderHealth(); renderScans();
-renderSources(); renderBehind();
+renderSources(); renderBehind(); renderMarketSkill();
 document.getElementById("foot").innerHTML =
   `Rebuild with <b>DASHBOARD.command</b>, or <code>python scripts/dashboard.py</code>.
    The journal is opened read-only and immutable, so this is safe to run while the

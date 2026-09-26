@@ -71,12 +71,19 @@ class LiveBookReader:
     def orderbook(self, ticker: str, depth: int = 50) -> DepthBook | None:
         """The live book for one market, in the same shape as the demo one."""
         try:
-            raw = self._get(f"/markets/{ticker}/orderbook",
-                            {"depth": depth}).get("orderbook") or {}
+            payload = self._get(f"/markets/{ticker}/orderbook", {"depth": depth})
         except Exception as exc:  # noqa: BLE001
             log.debug("LIVE  no book for %s: %s", ticker, exc)
             return None
-        return self._to_book(ticker, raw)
+        # DepthBook.from_api reads every shape Kalshi has shipped. This used
+        # to read only the legacy {"orderbook": {"yes", "no"}} shape, so once
+        # production moved to {"orderbook_fp": {"yes_dollars", "no_dollars"}}
+        # every live book parsed as empty and the execution probe recorded
+        # nothing at all - for days, silently (found 26 September).
+        book = DepthBook.from_api(ticker, payload or {})
+        if not book.yes_bids and not book.no_bids:
+            return None
+        return book
 
     @staticmethod
     def _to_book(ticker: str, raw: dict) -> DepthBook | None:

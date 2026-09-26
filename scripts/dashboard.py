@@ -315,7 +315,37 @@ def gather(conn) -> dict:
                    "seconds": float(x["seconds"] or 0)}
                   for x in q(conn, "SELECT * FROM scans ORDER BY id DESC LIMIT 40")][::-1]
     d.update(_sources(conn))
+    d["market_skill"] = _market_skill(conn)
     return d
+
+
+def _market_skill(conn) -> dict:
+    """Model vs market, per city and lead time - the same numbers the
+    market-skill gate trades on (kalshibot/market_skill.py), so the page and
+    the bot can never disagree about where it is allowed to trade."""
+    try:
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        import yaml
+        from kalshibot.config import _StrictLoader
+        from kalshibot.market_skill import (BUCKETS, MarketSkillConfig,
+                                            compute_cells, fetch_rows)
+        # Only this section is needed - not the credentials load_settings checks.
+        with open(ROOT / "config.yaml", encoding="utf-8") as fh:
+            raw = yaml.load(fh, Loader=_StrictLoader) or {}
+        cfg = MarketSkillConfig.from_dict(raw.get("market_skill"))
+        cells = compute_cells(fetch_rows(conn, "weather_temperature", cfg.since), cfg)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc), "cells": []}
+    order = {name: i for i, (_lo, _hi, name) in enumerate(BUCKETS)}
+    rows = [{"series": c.series, "bucket": c.bucket, "verdict": c.verdict,
+             "ours": c.our_brier, "market": c.market_brier, "diff": c.diff,
+             "z": c.zscore, "contracts": c.contracts, "rows": c.rows,
+             "mid_share": c.mid_share}
+            for c in cells.values()]
+    rows.sort(key=lambda r: (order.get(r["bucket"], 9), r["series"] != "ALL", r["series"]))
+    return {"require": cfg.require, "since": cfg.since,
+            "min_contracts": cfg.min_contracts, "cells": rows}
 
 
 def _sources(conn) -> dict:
