@@ -46,6 +46,24 @@ def _ago(iso: str | None) -> str:
     return f"{s/3600:.1f}h"
 
 
+def _when(iso: str | None) -> str:
+    """A journal timestamp in the viewer's own time zone: "Sep 26 11:13".
+
+    The journal is UTC; the droplet's clock is UTC too. The time zone comes
+    from the environment (TZ), which the VPS launcher sets to the Mac's, so
+    both watch screens show the same local times.
+    """
+    if not iso:
+        return "-"
+    try:
+        t = datetime.fromisoformat(iso)
+    except ValueError:
+        return str(iso)[:16]
+    if not t.tzinfo:
+        t = t.replace(tzinfo=timezone.utc)
+    return t.astimezone().strftime("%b %d %H:%M")
+
+
 def _table(conn, name) -> bool:
     return bool(conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -57,7 +75,7 @@ def render(conn, db: Path, rows: int) -> str:
     w = 96
     out.append(f"{C}{B}{'=' * w}{X}")
     out.append(f"{C}{B}  KALSHI BOT MONITOR{X}   {D}{db.name}   "
-               f"{datetime.now():%H:%M:%S}{X}")
+               f"{datetime.now().astimezone():%a %b %d  %H:%M:%S %Z}{X}")
     out.append(f"{C}{B}{'=' * w}{X}")
 
     # ---------------- is it running? ----------------
@@ -138,7 +156,7 @@ def render(conn, db: Path, rows: int) -> str:
         out.append("")
         out.append(f"{B}  LATEST OPPORTUNITIES{X}  "
                    f"{D}what it found and what it decided{X}")
-        out.append(f"{D}    {'strategy':<18}{'legs':>5}{'qty':>5}{'cost':>9}"
+        out.append(f"{D}    {'when':<13}{'strategy':<18}{'legs':>5}{'qty':>5}{'cost':>9}"
                    f"{'floor':>9}{'fees':>8}{'net':>9}  decision / why{X}")
         found = list(conn.execute(
             "SELECT * FROM opportunities ORDER BY id DESC LIMIT ?", (rows,)))
@@ -149,7 +167,8 @@ def render(conn, db: Path, rows: int) -> str:
             col = G if acc else D
             why = (o["reject_reason"] if not acc else "TRADE")[:22]
             out.append(
-                f"    {o['strategy'][:17]:<18}{o['n_legs']:>5}{o['quantity']:>5}"
+                f"    {D}{_when(o['ts']):<13}{X}"
+                f"{o['strategy'][:17]:<18}{o['n_legs']:>5}{o['quantity']:>5}"
                 f"{o['gross_cost']:>9.2f}{o['guaranteed_min_payout']:>9.2f}"
                 f"{o['estimated_fees']:>8.2f}{o['net_edge']:>+9.3f}  "
                 f"{col}{why}{X}")
@@ -165,16 +184,22 @@ def render(conn, db: Path, rows: int) -> str:
     # ---------------- recent legs ----------------
     if _table(conn, "leg_orders"):
         legs = list(conn.execute(
-            "SELECT * FROM leg_orders ORDER BY id DESC LIMIT 6"))
+            "SELECT * FROM leg_orders ORDER BY id DESC LIMIT 8"))
         if legs:
             out.append("")
-            out.append(f"{B}  RECENT ORDERS{X}")
+            out.append(f"{B}  RECENT ORDERS{X}  {D}newest first, "
+                       f"{datetime.now().astimezone():%Z} time{X}")
             for l in legs:
                 st = l["state"]
-                col = G if st == "FILLED" else (Y if "PARTIAL" in st else R)
-                out.append(f"    {col}{st:<20}{X}{l['ticker'][:28]:<29}"
+                col = (G if st in ("FILLED", "SETTLED")
+                       else (Y if "PARTIAL" in st else R))
+                px = l["avg_price_cents"]
+                if px is None:
+                    px = l["limit_price_cents"]
+                out.append(f"    {D}{_when(l['ts']):<13}{X}{col}{st:<18}{X}"
+                           f"{l['action']:<5}{l['ticker'][:28]:<29}"
                            f"{l['side']:<4}{l['filled']}/{l['requested']} "
-                           f"@ {l['avg_price_cents']:.0f}c")
+                           f"@ {(px or 0):.0f}c")
 
     out.append("")
     out.append(f"{D}  refreshing every few seconds. Ctrl+C to stop watching - "
