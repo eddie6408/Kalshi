@@ -346,3 +346,42 @@ def test_the_watch_screen_and_the_report_show_the_flow():
             sys.argv = ["opportunity_report.py", "--db", str(Path(tmp) / "j.db")]
             assert opportunity_report.main() == 0
         assert "low confidence" in out.getvalue() and "SIMULATED" in out.getvalue()
+
+
+def test_readers_and_writers_can_share_the_journal_connection():
+    """The failure found on the two-core server on 27 September: threads
+    READING through journal.conn while others wrote raised "bad parameter or
+    other API misuse", killed a thread and lost writes. Every call through
+    the connection now holds the journal lock."""
+    for _round in range(3):
+        with tempfile.TemporaryDirectory() as tmp:
+            j = _j(tmp)
+            errors, empty = [], []
+
+            def writer_reader():
+                try:
+                    for i in range(40):
+                        row = _stub_row(j, 0.5, 50, 50, f"R{threading.get_ident()}-{i}")
+                        if not row:
+                            empty.append(1)
+                        list(j.conn.execute("SELECT COUNT(*) FROM opportunity_ledger"))
+                        j.calibration()
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(repr(exc))
+
+            def scanner():
+                try:
+                    for _ in range(80):
+                        for r in j.conn.execute("SELECT * FROM opportunity_ledger LIMIT 50"):
+                            dict(r)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(repr(exc))
+            ts = [threading.Thread(target=writer_reader) for _ in range(4)] + \
+                 [threading.Thread(target=scanner) for _ in range(2)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+            assert not errors, errors[:3]
+            assert not empty
+            assert j.conn.execute("SELECT COUNT(*) FROM opportunity_ledger").fetchone()[0] == 160

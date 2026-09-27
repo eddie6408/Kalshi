@@ -440,16 +440,98 @@ def _ids(ids) -> str | None:
     return ",".join(str(int(i)) for i in ids) if ids else None
 
 
+class _Result:
+    """A cursor's results, fetched in full while the lock was held."""
+    __slots__ = ("_rows", "_i", "rowcount", "lastrowid", "description")
+
+    def __init__(self, rows, rowcount, lastrowid, description):
+        self._rows, self._i = rows, 0
+        self.rowcount, self.lastrowid, self.description = rowcount, lastrowid, description
+
+    def fetchone(self):
+        if self._i >= len(self._rows):
+            return None
+        self._i += 1
+        return self._rows[self._i - 1]
+
+    def fetchall(self):
+        rest, self._i = self._rows[self._i:], len(self._rows)
+        return rest
+
+    def fetchmany(self, size=1):
+        chunk = self._rows[self._i:self._i + size]
+        self._i += len(chunk)
+        return chunk
+
+    def __iter__(self):
+        while self._i < len(self._rows):
+            self._i += 1
+            yield self._rows[self._i - 1]
+
+
+class _SafeConnection:
+    """The journal's one SQLite connection, made safe to share between threads.
+
+    Python's sqlite3 leaves serialising a shared connection to the caller.
+    The bot did not: its workers read and wrote through one connection at
+    once, and on the two-core server that failed outright - "bad parameter
+    or other API misuse", a thread killed, writes lost (found 27 September
+    while testing Package 2; a write-only lock was not enough). Every call
+    now holds the journal lock, and results are fetched completely before it
+    is released, so no cursor is ever live on the connection outside it.
+    """
+
+    def __init__(self, conn: sqlite3.Connection, lock):
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_lock", lock)
+
+    def _run(self, fn, *a):
+        with self._lock:
+            cur = fn(*a)
+            rows = cur.fetchall() if cur.description else []
+            return _Result(rows, cur.rowcount, cur.lastrowid, cur.description)
+
+    def execute(self, sql, params=()):
+        return self._run(self._conn.execute, sql, params)
+
+    def executemany(self, sql, seq):
+        return self._run(self._conn.executemany, sql, seq)
+
+    def executescript(self, script):
+        with self._lock:
+            self._conn.executescript(script)
+
+    def commit(self):
+        with self._lock:
+            self._conn.commit()
+
+    def rollback(self):
+        with self._lock:
+            self._conn.rollback()
+
+    def close(self):
+        with self._lock:
+            self._conn.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._conn, name, value)
+
+
 class Journal:
     def __init__(self, db_path: str | Path):
         self.path = Path(db_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        #: Every write method holds this for its whole execute...commit, so
-        #: two workers can no longer interleave transactions on the one shared
-        #: connection (audit H1). Re-entrant: a write may call another.
+        raw = sqlite3.connect(self.path, check_same_thread=False)
+        raw.row_factory = sqlite3.Row
+        #: Audit H1. Every write method holds this for its whole
+        #: execute...commit, so workers cannot interleave transactions; and
+        #: EVERY call through `conn` - reads included, from any module - holds
+        #: it too (see _SafeConnection). Re-entrant: a write may call another.
         self.lock = threading.RLock()
+        self.conn = _SafeConnection(raw, self.lock)
         try:
             self.conn.executescript(SCHEMA)
             self.conn.commit()
