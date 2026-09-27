@@ -153,6 +153,31 @@ def render(conn, db: Path, rows: int) -> str:
             out.append(f"  {R}{B}  {e['exposed']} trade(s) left unhedged - "
                        f"MANUAL REVIEW{X}")
 
+    # ---------------- opportunity flow (Package 2) ----------------
+    # Everything the bot evaluated today and what became of it - the view
+    # that says whether "no trades" means "nothing worth trading" or a fault.
+    if _table(conn, "opportunity_ledger"):
+        midnight = datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+        flow = conn.execute(
+            "SELECT decision, decision_stage, final_state, COUNT(*) n "
+            "FROM opportunity_ledger WHERE detected_at >= ? "
+            "GROUP BY decision, decision_stage, final_state", (midnight,)).fetchall()
+        if flow:
+            total = sum(r["n"] for r in flow)
+            stages: dict = {}
+            for r in flow:
+                if r["decision"] == "REJECTED":
+                    stages[r["decision_stage"]] = stages.get(r["decision_stage"], 0) + r["n"]
+            accepted = sum(r["n"] for r in flow if r["decision"] == "ACCEPTED")
+            traded = sum(r["n"] for r in flow if r["final_state"] in
+                         ("FILLED", "PARTIALLY_FILLED", "EXITED", "SETTLED"))
+            out.append("")
+            out.append(f"  {B}OPPORTUNITY FLOW{X} {D}today{X}  evaluated {total}  "
+                       f"accepted {accepted}  traded {traded}")
+            out.append(f"{D}    rejected by stage: " + "  ".join(
+                f"{k or '?'} {v}" for k, v in sorted(stages.items(), key=lambda x: -x[1])) + X)
+
     # ---------------- sources (package 14A) ----------------
     # Where the outside information comes from and whether it is working.
     # Written by the bot every heartbeat; blank on a journal from before 14A.
