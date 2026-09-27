@@ -90,7 +90,8 @@ class TradeResult:
     sets_completed: int = 0
     total_cost_usd: float = 0.0
     total_fees_usd: float = 0.0
-    realised_edge_usd: float = 0.0
+    #: guaranteed edge at entry (arbitrage); None when not knowable at entry
+    realised_edge_usd: float | None = 0.0
     unwound: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     started: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -399,9 +400,16 @@ class ExecutionManager:
         for l in result.legs:
             l.fee_usd = self.fees.entry_fee_usd(
                 l.avg_price_cents or l.leg.limit_price_cents, l.filled)
-        if result.outcome is TradeOutcome.COMPLETE:
+        # Only a guaranteed basket has an edge that is known at entry. A
+        # forecast trade has no guaranteed payout; booking "0 payout - cost"
+        # recorded every weather purchase as a loss of its whole price.
+        # Its result arrives later, from the exit or the settlement.
+        if (result.outcome is TradeOutcome.COMPLETE
+                and getattr(result.opportunity, "guaranteed", True)):
             payout = result.opportunity.guaranteed_min_payout
             result.realised_edge_usd = payout - result.total_cost_usd - result.total_fees_usd
+        else:
+            result.realised_edge_usd = None
 
     def _reconcile(self, result: TradeResult) -> None:
         """Compare what we think we own against what the exchange says."""

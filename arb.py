@@ -242,8 +242,10 @@ def summarise(report: ScanReport, verbose: bool, label: str = "SCAN") -> None:
         for lx in t.legs:
             print(f"    {lx.state.value:<18} {lx.leg.ticker:<26} "
                   f"{lx.filled}/{lx.requested} @ {lx.avg_price_cents:.0f}c")
+        edge = ("n/a (not guaranteed)" if t.realised_edge_usd is None
+                else f"${t.realised_edge_usd:+.2f}")
         print(f"    cost ${t.total_cost_usd:.2f}  fees ${t.total_fees_usd:.2f}  "
-              f"realised ${t.realised_edge_usd:+.2f}")
+              f"guaranteed edge {edge}")
         for n in t.notes:
             print(f"    {D}{n}{X}")
 
@@ -376,6 +378,8 @@ def main() -> int:
 
     fees = FeeModel(settings.section("fees"))
     journal = Journal(settings.path("journal.database_path", "data/journal.db"))
+    if balance is not None:
+        journal.log_balance(balance)
 
     # ---- package 14A: approved sources, health, provenance -------------
     # The registry is validated here: a config that would let a tier-4
@@ -650,6 +654,12 @@ def main() -> int:
                     log.info("MARKET STATE  %s | feed %s", state.stats.summary(),
                              feed.stats.summary() if feed_cfg.enabled else "off")
                     log.info("SOURCES  %s", MONITOR.summary())
+                    # The balance, from the exchange, for the watch screen.
+                    if portfolio is not None:
+                        try:
+                            journal.log_balance(portfolio.balance_usd())
+                        except Exception as exc:  # noqa: BLE001
+                            log.debug("could not record the balance: %s", exc)
                     snap = MONITOR.snapshot()
                     try:
                         journal.save_source_health(snap)
@@ -684,7 +694,7 @@ def main() -> int:
     s = journal.arbitrage_summary()
     print(f"\n{D}  journal totals: {s['opportunities']} opportunities, "
           f"{s['accepted']} accepted, {s['executions']} executions, "
-          f"net ${s['net_pnl']:+.2f}{X}\n")
+          f"guaranteed edge booked ${(s['net_pnl'] or 0):+.2f}{X}\n")
     return 0
 
 

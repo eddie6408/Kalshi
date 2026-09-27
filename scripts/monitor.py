@@ -109,18 +109,46 @@ def render(conn, db: Path, rows: int) -> str:
                    f"{scan['traded']} traded{X}")
 
     # ---------------- money ----------------
+    # Real money, from what actually happened: fills and settlements, and
+    # the balance the exchange reports. Until 27 September this line summed
+    # executions.realised_edge_usd - the edge EXPECTED at entry - which
+    # counted every weather purchase as a loss of its whole price and showed
+    # -$119 on an account that was down about $20.
+    if _table(conn, "leg_orders"):
+        from kalshibot.journal import pnl_summary
+        midnight = datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        p = pnl_summary(conn, since=midnight.isoformat())
+        pc = lambda v: G if v > 0 else (R if v < 0 else D)  # noqa: E731
+        out.append("")
+        line = (f"  {B}REALISED P/L{X} {pc(p['realised'])}{B}${p['realised']:+,.2f}{X}"
+                f"  {D}all time{X}    today {pc(p['realised_since'])}"
+                f"${p['realised_since']:+,.2f}{X}    "
+                f"{D}{p['closed']} closed, {p['wins']} won{X}")
+        out.append(line)
+        bal = None
+        if _table(conn, "account_snapshots"):
+            bal = conn.execute("SELECT ts, balance_usd FROM account_snapshots "
+                               "ORDER BY id DESC LIMIT 1").fetchone()
+            first_today = conn.execute(
+                "SELECT balance_usd FROM account_snapshots WHERE ts >= ? "
+                "ORDER BY id LIMIT 1", (midnight.isoformat(),)).fetchone()
+        if bal is not None:
+            change = (f"   today {pc(bal['balance_usd'] - first_today['balance_usd'])}"
+                      f"${bal['balance_usd'] - first_today['balance_usd']:+,.2f}{X}"
+                      if first_today else "")
+            out.append(f"  {B}DEMO BALANCE{X} ${bal['balance_usd']:,.2f}"
+                       f"{change}   {D}from the exchange, {_ago(bal['ts'])} ago{X}")
+        if p["open"]:
+            out.append(f"  {D}  {p['open']} position(s) open, ${p['open_cost']:,.2f} at cost{X}")
+
     if _table(conn, "executions"):
         e = conn.execute(
-            "SELECT COUNT(*) n, COALESCE(SUM(realised_edge_usd),0) pnl, "
-            "COALESCE(SUM(total_fees_usd),0) fees, "
+            "SELECT COUNT(*) n, COALESCE(SUM(total_fees_usd),0) fees, "
             "SUM(CASE WHEN outcome='COMPLETE' THEN 1 ELSE 0 END) done, "
             "SUM(exposed) exposed FROM executions").fetchone()
-        pnl = e["pnl"] or 0.0
-        col = G if pnl > 0 else (R if pnl < 0 else D)
-        out.append("")
-        out.append(f"  {B}DEMO P/L{X} {col}{B}${pnl:+,.2f}{X}    "
-                   f"trades {e['n']}  complete {e['done'] or 0}  "
-                   f"fees ${e['fees']:.2f}")
+        out.append(f"  {D}  trades {e['n']}  complete {e['done'] or 0}  "
+                   f"fees ${e['fees']:.2f}{X}")
         if e["exposed"]:
             out.append(f"  {R}{B}  {e['exposed']} trade(s) left unhedged - "
                        f"MANUAL REVIEW{X}")

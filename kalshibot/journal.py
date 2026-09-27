@@ -294,6 +294,14 @@ CREATE TABLE IF NOT EXISTS breaker_resets (
     note TEXT
 );
 
+-- The demo account balance, as the exchange reports it, every heartbeat.
+-- The one P/L number nothing in the bot's own bookkeeping can get wrong.
+CREATE TABLE IF NOT EXISTS account_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    balance_usd REAL
+);
+
 -- What Kalshi says each series settles on, as read from the exchange.
 CREATE TABLE IF NOT EXISTS settlement_sources (
     series TEXT NOT NULL,
@@ -316,6 +324,53 @@ class JournalError(RuntimeError):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def pnl_summary(conn, since: str | None = None) -> dict:
+    """Realised P/L from what actually happened: fills, and settlements
+    booked as closing legs. Shared by the bot and the watch screen so the
+    two can never disagree.
+
+        realised        all closed quantity, all time
+        realised_since  only positions whose last close is after `since`
+        closed / wins   matched positions, and how many made money
+        open / open_cost  lines still open, and what they cost
+
+    NOT executions.realised_edge_usd. That is the edge a trade was EXPECTED
+    to make at entry, and for a forecast trade - which has no guaranteed
+    payout - it was recorded as minus the whole purchase price, which made
+    every weather purchase look like a total loss (fixed 27 September).
+    """
+    flows: dict = {}
+    for r in conn.execute(
+            "SELECT ticker, side, action, filled, avg_price_cents, "
+            "limit_price_cents, ts FROM leg_orders WHERE filled > 0 ORDER BY id"):
+        f = flows.setdefault((r[0], r[1]), {"b": 0, "s": 0, "sp": 0.0, "g": 0.0, "last": ""})
+        n = int(r[3] or 0)
+        px = r[4] if r[4] is not None else (r[5] or 0)
+        px = float(px) / 100.0
+        if r[2] == "buy":
+            f["b"] += n
+            f["sp"] += n * px
+        else:
+            f["s"] += n
+            f["g"] += n * px
+            f["last"] = r[6] or ""
+    out = {"realised": 0.0, "realised_since": 0.0, "closed": 0, "wins": 0,
+           "open": 0, "open_cost": 0.0}
+    for f in flows.values():
+        if f["b"] and f["s"]:
+            matched = min(f["b"], f["s"])
+            pnl = matched * (f["g"] / f["s"] - f["sp"] / f["b"])
+            out["realised"] += pnl
+            out["closed"] += 1
+            out["wins"] += 1 if pnl > 0 else 0
+            if since and f["last"] >= since:
+                out["realised_since"] += pnl
+        if f["b"] > f["s"]:
+            out["open"] += 1
+            out["open_cost"] += (f["b"] - f["s"]) * (f["sp"] / f["b"])
+    return out
 
 
 def _ids(ids) -> str | None:
@@ -979,6 +1034,11 @@ class Journal:
                 break
         return n
 
+    def log_balance(self, balance_usd: float) -> None:
+        self.conn.execute("INSERT INTO account_snapshots (ts, balance_usd) VALUES (?, ?)",
+                          (_now(), float(balance_usd)))
+        self.conn.commit()
+
     def last_breaker_reset(self) -> str | None:
         row = self.conn.execute(
             "SELECT ts FROM breaker_resets ORDER BY id DESC LIMIT 1").fetchone()
@@ -1081,7 +1141,10 @@ class Journal:
             "complete": one("SELECT COUNT(*) FROM executions WHERE outcome='COMPLETE'"),
             "partial": one("SELECT COUNT(*) FROM executions WHERE outcome LIKE 'PARTIAL%'"),
             "exposed": one("SELECT COUNT(*) FROM executions WHERE exposed=1"),
-            "net_pnl": one("SELECT SUM(realised_edge_usd) FROM executions"),
+            # Guaranteed edge booked at entry - arbitrage only. Forecast
+            # trades have no guaranteed payout and no entry edge to book.
+            "net_pnl": one("SELECT SUM(realised_edge_usd) FROM executions "
+                           "WHERE strategy NOT LIKE 'forecast%'"),
             "fees": one("SELECT SUM(total_fees_usd) FROM executions"),
             "legs_submitted": one("SELECT COUNT(*) FROM leg_orders"),
             "legs_filled": one("SELECT COUNT(*) FROM leg_orders WHERE state='FILLED'"),
