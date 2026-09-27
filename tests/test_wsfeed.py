@@ -144,6 +144,36 @@ def test_many_markets_share_one_subscription_counter():
     assert not f._pending_resnapshot
 
 
+def test_the_ok_for_added_markets_takes_a_sequence_number():
+    """Captured live on 27 September: adding markets to a live subscription
+    is acknowledged with an "ok" that uses the next number on that sid."""
+    s = MarketState(None)
+    f = feed(s)
+    f._handle(snapshot(ticker="A", seq=1, sid=1))
+    f._handle(json.dumps({"type": "ok", "id": 3, "sid": 1, "seq": 2}))
+    f._handle(snapshot(ticker="B", seq=3, sid=1))
+    f._handle(delta(ticker="B", amount="+5.00", seq=4, sid=1))
+    assert f.stats.gaps == 0 and f.stats.deltas == 1
+    assert s.entry("A").trusted and s.entry("B").trusted
+
+
+def test_a_reconnect_logs_one_line_not_one_per_book():
+    import logging
+    s = MarketState(None)
+    for t in ("A", "B", "C"):
+        s.apply_snapshot(t, [(60, 1)], [], seq=None)
+    records = []
+    h = logging.Handler()
+    h.emit = records.append
+    logging.getLogger("kalshibot.market_state").addHandler(h)
+    try:
+        s.invalidate_all("test")
+    finally:
+        logging.getLogger("kalshibot.market_state").removeHandler(h)
+    assert len(records) == 1 and "3 cached books" in records[0].getMessage()
+    assert not any(s.entry(t).trusted for t in ("A", "B", "C"))
+
+
 def test_subscriptions_count_independently():
     s = MarketState(None)
     f = feed(s)

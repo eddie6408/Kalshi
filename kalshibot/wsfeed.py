@@ -320,6 +320,14 @@ class KalshiFeed:
             self.stats.unparsed += 1
             return
 
+        # EVERY message that carries a subscription sequence is checked, not
+        # only book messages: the "ok" that acknowledges markets added to a
+        # live subscription takes the next number on it ({"type": "ok",
+        # "sid": 1, "seq": 51}). Ignoring it read as a gap and cost a
+        # reconnect every time the feed followed something new.
+        if not self._in_order(payload):
+            return
+
         kind = payload.get("type")
         if kind == "orderbook_snapshot":
             self._on_snapshot(payload)
@@ -340,8 +348,6 @@ class KalshiFeed:
         ticker = msg.get("market_ticker")
         if not ticker:
             self.stats.unparsed += 1
-            return
-        if not self._in_order(payload):
             return
         yes = self._levels(msg, "yes")
         no = self._levels(msg, "no")
@@ -392,8 +398,6 @@ class KalshiFeed:
             log.debug("FEED  unusable delta: %.200s", msg)
             return
 
-        if not self._in_order(payload):
-            return
         ok = self.state.apply_delta(ticker, side, price, delta, seq=None)
         if ok:
             self.stats.deltas += 1

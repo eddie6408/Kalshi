@@ -372,12 +372,14 @@ class MarketState:
             self._books.move_to_end(ticker)
             return True
 
-    def _distrust(self, entry: BookEntry, why: str) -> None:
-        if entry.trusted:
+    def _distrust(self, entry: BookEntry, why: str, quiet: bool = False) -> bool:
+        was = entry.trusted
+        if was and not quiet:
             log.warning("STATE  %s is no longer trusted - %s; falling back to "
                         "REST until a fresh snapshot arrives", entry.ticker, why)
         entry.trusted = False
         entry.untrusted_reason = why
+        return was
 
     def invalidate(self, ticker: str, why: str = "invalidated") -> None:
         with self._lock:
@@ -392,8 +394,12 @@ class MarketState:
         what to resubscribe to. They are simply not served any more.
         """
         with self._lock:
-            for entry in self._books.values():
-                self._distrust(entry, why)
+            n = sum(self._distrust(entry, why, quiet=True)
+                    for entry in self._books.values())
+        # One line, not one per book: a reconnect distrusts hundreds at once.
+        if n:
+            log.warning("STATE  %d cached books no longer trusted - %s; REST "
+                        "until fresh snapshots arrive", n, why)
 
     def _evict(self) -> None:
         """Keep the store bounded. The exchange has 80,000 markets; we do not
