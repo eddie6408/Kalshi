@@ -134,9 +134,10 @@ def _encode(v: Any) -> Any:
 class Database:
     def __init__(self, path: str | Path, read_only: bool = False):
         self.path = Path(path)
-        if not read_only:
+        memory = str(path) == ":memory:"
+        if not read_only and not memory:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        uri = f"file:{self.path}?mode=ro" if read_only else f"file:{self.path}"
+        uri = "file::memory:" if memory else (f"file:{self.path}?mode=ro" if read_only else f"file:{self.path}")
         self.conn = sqlite3.connect(uri, uri=True, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.lock = threading.RLock()

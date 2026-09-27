@@ -56,6 +56,6 @@ def generic_movement_score(f, vol_cfg, elig_cfg) -> float:
         "volume": f.volume_window / (5 * elig_cfg.min_volume_window) if elig_cfg.min_volume_window else 0,
         "liquidity": (min(f.bid_depth or 0, f.ask_depth or 0)) / (3 * elig_cfg.min_liquidity_contracts),
         "spread": 1 - ((f.spread if f.spread is not None else 99) - 1) / max(elig_cfg.max_spread_cents, 1),
-        "freshness": 1 - (f.data_age or 999) / elig_cfg.max_data_age_seconds,
+        "freshness": 1 - (f.data_age if f.data_age is not None else 999) / elig_cfg.max_data_age_seconds,
     }
     return quality_score(comps)

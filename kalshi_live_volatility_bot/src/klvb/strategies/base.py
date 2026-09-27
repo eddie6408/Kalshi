@@ -40,6 +40,7 @@ class StrategyContext:
     vol_cfg: Any
     min_score: float
     sports: SportsContext | None = None
+    take_profit_maker: bool = True
 
     # ---- side-space helpers ----
     def points(self, seconds: float, side: str) -> list[tuple[float, float]]:
@@ -75,8 +76,10 @@ class Strategy(abc.ABC):
     def costs(self, ctx: StrategyContext, entry: float, exit_: float) -> float:
         """Per-contract fees (entry+exit) + expected slippage, cents."""
         taker_entry = self.p.get("entry_style", "taker") == "taker"
-        fees = ctx.fees.round_trip_cost(entry, exit_, REPRESENTATIVE_COUNT, taker_entry, True, ctx.meta)
-        slip = ctx.costs_cfg.expected_slippage_ticks * ctx.meta.tick_size * (2 if taker_entry else 1)
+        taker_exit = not ctx.take_profit_maker
+        fees = ctx.fees.round_trip_cost(entry, exit_, REPRESENTATIVE_COUNT, taker_entry, taker_exit, ctx.meta)
+        legs = int(taker_entry) + int(taker_exit)
+        slip = ctx.costs_cfg.expected_slippage_ticks * ctx.meta.tick_size * legs
         return fees + slip
 
     def base_components(self, ctx: StrategyContext, expected_net: float, costs: float) -> dict[str, float]:
@@ -88,7 +91,7 @@ class Strategy(abc.ABC):
             "liquidity": depth / (3.0 * e.min_liquidity_contracts),
             "spread": 1.0 - ((f.spread if f.spread is not None else 99) - 1.0) / max(e.max_spread_cents, 1),
             "edge": expected_net / (expected_net + costs) if expected_net > 0 else 0.0,
-            "freshness": 1.0 - (f.data_age or 999) / e.max_data_age_seconds,
+            "freshness": 1.0 - (f.data_age if f.data_age is not None else 999) / e.max_data_age_seconds,
         }
 
     def make_signal(self, ctx: StrategyContext, action: str, entry: float, target: float, stop: float,

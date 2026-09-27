@@ -94,7 +94,7 @@ default_fee_type = "quadratic_with_maker_fees"   # conservative default when unk
 [costs]
 # Extra safety margin required above modeled fees+spread+slippage before entering.
 min_net_edge_cents = 1.5
-expected_slippage_ticks = 1.0
+expected_slippage_ticks = 0.5   # per taker leg
 
 [strategies]
 enabled = ["DIP", "MOMENTUM", "REVERSAL", "DOWNTREND"]
@@ -163,9 +163,14 @@ max_hold_seconds = 600
 entry_style = "taker"
 
 [exits]
+# Take-profit handling. "maker": as soon as an entry fills, a post-only reduce-only SELL rests at the
+# target (zero/25% maker fee, no spread crossing). Protective exits (stop, time, momentum, liquidity,
+# settlement, emergency) cancel it and cross the spread. "taker": sell at the bid once target is reached.
+take_profit_style = "maker"
 trailing_activation_cents = 3     # trailing stop arms once the position is up this much (at exit price)
 trailing_distance_cents = 3
-momentum_exit_velocity = -1.5     # cents/min against the position on the short window
+momentum_exit_velocity = -1.5     # cents/min against the position on the short window (medium must agree)
+thesis_fail_cents = 2             # adverse move required before a momentum/reversal thesis exit
 settlement_exit_seconds = 600     # flatten this long before close
 max_exit_spread_cents = 6         # liquidity exit trigger
 min_exit_depth_contracts = 20
@@ -184,6 +189,7 @@ max_positions_per_event = 1       # markets inside one event are highly correlat
 max_daily_loss = 50.0
 max_strategy_daily_loss = 25.0
 on_daily_loss = "manage"          # manage = keep managing exits normally; flatten = exit everything
+kill_switch_flatten = false       # kill switch stops NEW orders; set true to also flatten open positions
 max_trades_per_hour = 20
 max_trades_per_market_per_hour = 3
 market_cooldown_seconds = 120
