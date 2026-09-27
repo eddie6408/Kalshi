@@ -1,0 +1,49 @@
+# Profile for replaying 1-MINUTE candlestick data (klvb backtest --config config/profiles/candles_1m.toml).
+# Live trading polls every ~2s; candles only give one observation per minute, so every
+# time window is stretched accordingly. Results at this resolution are a real-data test of
+# the strategy concept, NOT a substitute for recorded 2-second PAPER data.
+
+[app]
+loop_interval_seconds = 60.0
+
+[data]
+max_data_age_seconds = 150.0
+emergency_data_age_seconds = 600.0
+
+[eligibility]
+max_data_age_seconds = 150.0
+min_volume_window = 50
+min_volatility = 0.4
+
+[volatility]
+short_window_seconds = 180
+medium_window_seconds = 600
+long_window_seconds = 1800
+min_samples = 6
+
+[strategies.dip]
+lookback_seconds = 2400
+stabilization_seconds = 120
+max_hold_seconds = 3600
+
+[strategies.reversal]
+lookback_seconds = 2400
+stabilization_seconds = 120
+max_hold_seconds = 3600
+
+[strategies.momentum]
+lookback_seconds = 900
+confirm_samples = 3
+max_hold_seconds = 2400
+
+[strategies.downtrend]
+lookback_seconds = 900
+confirm_samples = 3
+max_hold_seconds = 2400
+
+[risk]
+max_holding_seconds = 3600
+market_cooldown_seconds = 600
+
+[paper]
+maker_order_ttl_seconds = 300

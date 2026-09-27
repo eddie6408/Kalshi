@@ -6,6 +6,7 @@
   backtest        deterministic replay of recorded data
   walkforward     train / validation / out-of-sample evaluation
   fetch-history   build a replay dataset from Kalshi public history (no credentials)
+  import-candles  import saved Kalshi 1-minute candlestick JSON files for replay
   readiness       production-readiness checklist (LIVE is refused unless all pass)
   selftest        offline risk / restart-recovery validation
   validate-exec   execution validation on Kalshi DEMO (dedicated demo account only)
@@ -137,6 +138,14 @@ def cmd_fetch_history(cfg, args) -> int:
     return 0
 
 
+def cmd_import_candles(cfg, args) -> int:
+    from .backtest.candles import import_candle_dir
+    from .storage.db import Database
+    series = set(args.series.split(",")) if args.series else None
+    _print(import_candle_dir(args.dir, Database(args.out), assumed_depth=args.assumed_depth, series_filter=series))
+    return 0
+
+
 def cmd_readiness(cfg, args) -> int:
     from .readiness import evaluate
     from .storage.db import Database
@@ -218,6 +227,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--assumed-depth", type=float, default=200)
     p.add_argument("--min-volume", type=float, default=1000)
     p.add_argument("--out", default="data/history.sqlite3")
+    p = sub.add_parser("import-candles", help="import real Kalshi 1-minute candlestick JSON files for replay")
+    p.add_argument("--dir", required=True)
+    p.add_argument("--out", default="data/candles.sqlite3")
+    p.add_argument("--series", help="comma separated series filter")
+    p.add_argument("--assumed-depth", type=float, default=200)
     sub.add_parser("readiness")
     p = sub.add_parser("selftest")
     p.add_argument("--record", action="store_true")
@@ -230,7 +244,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
     handler = {"run": cmd_run, "status": cmd_status, "report": cmd_report, "backtest": cmd_backtest,
-               "walkforward": cmd_walkforward, "fetch-history": cmd_fetch_history, "readiness": cmd_readiness,
+               "walkforward": cmd_walkforward, "fetch-history": cmd_fetch_history,
+               "import-candles": cmd_import_candles, "readiness": cmd_readiness,
                "selftest": cmd_selftest, "validate-exec": cmd_validate_exec, "kill": cmd_kill, "unkill": cmd_unkill,
                "prune": cmd_prune}[args.cmd]
     return handler(cfg, args)

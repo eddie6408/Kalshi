@@ -1,0 +1,44 @@
+[Unit]
+Description=Kalshi Live Volatility Trader (standalone; independent of any other bot on this host)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=klvb
+Group=klvb
+WorkingDirectory=/opt/kalshi-live-volatility/app
+EnvironmentFile=/etc/kalshi-live-volatility/klvb.env
+Environment=KLVB_DATA_DIR=/var/lib/kalshi-live-volatility
+Environment=KLVB_LOG_DIR=/var/log/kalshi-live-volatility
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/kalshi-live-volatility/venv/bin/klvb run
+Restart=on-failure
+RestartSec=15
+# LIVE refusal (exit code 2) must not restart-loop
+RestartPreventExitStatus=2
+TimeoutStopSec=30
+
+# ---- resource isolation: never starve the other application on this VPS ----
+Nice=10
+CPUQuota=50%
+MemoryMax=768M
+MemoryHigh=600M
+TasksMax=64
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+# ---- hardening ----
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/kalshi-live-volatility /var/log/kalshi-live-volatility
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
