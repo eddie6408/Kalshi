@@ -186,3 +186,8 @@ class KalshiPublicRestProvider(MarketDataProvider):
                 out.append(tp)
         out.sort(key=lambda t: t.ts)
         return out
+
+    async def market(self, ticker: str) -> dict[str, Any]:
+        """Raw market object (used to read the settlement result of a market we hold)."""
+        data = await self.client.get(f"/markets/{ticker}")
+        return data.get("market") or {}

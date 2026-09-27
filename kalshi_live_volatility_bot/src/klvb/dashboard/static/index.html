@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kalshi Live Volatility Trader</title>
+<style>
+  :root { --bg:#f7f7f5; --panel:#fff; --ink:#1d1d1b; --muted:#6b6b66; --line:#e3e2dc; --good:#1f7a4d; --bad:#b3261e; --warn:#9a6700; --accent:#2f5bd3; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141413; --panel:#1d1d1b; --ink:#ecebe6; --muted:#9d9b94; --line:#33322f; --good:#5cc08c; --bad:#f08a80; --warn:#e0b04a; --accent:#8ea8ff; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; }
+  header { padding:14px 16px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:8px 18px; align-items:baseline; }
+  h1 { font-size:16px; margin:0 12px 0 0; }
+  .pill { font-size:12px; padding:2px 8px; border-radius:99px; border:1px solid var(--line); background:var(--panel); }
+  .pill.good { color:var(--good); } .pill.bad { color:var(--bad); } .pill.warn { color:var(--warn); }
+  main { padding:12px 16px 40px; display:grid; gap:14px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; min-width:0; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 8px; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+  th, td { text-align:right; padding:4px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th:first-child, td:first-child, td.l, th.l { text-align:left; }
+  th { font-weight:600; color:var(--muted); font-size:12px; }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:8px; }
+  .kpi { border:1px solid var(--line); border-radius:6px; padding:8px; }
+  .kpi b { display:block; font-size:18px; }
+  .kpi span { color:var(--muted); font-size:12px; }
+  .note { color:var(--muted); font-size:12px; margin-top:6px; }
+  .pos { color:var(--good); } .neg { color:var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kalshi Live Volatility Trader</h1>
+  <span id="pills"></span>
+</header>
+<main>
+  <section><h2>System status</h2><div class="kpis" id="kpis"></div><div class="note" id="statusNote"></div></section>
+  <section><h2>Live market scanner</h2><div class="scroll"><table id="scanner"></table></div></section>
+  <section><h2>Active positions</h2><div class="scroll"><table id="positions"></table></div></section>
+  <div class="grid2">
+    <section><h2>Paper P&amp;L (simulated)</h2><div id="perf-PAPER"></div></section>
+    <section><h2>Shadow P&amp;L (simulated)</h2><div id="perf-SHADOW"></div></section>
+    <section><h2>Live P&amp;L (real money)</h2><div id="perf-LIVE"></div></section>
+  </div>
+  <section><h2>Recent signals</h2><div class="scroll"><table id="signals"></table></div></section>
+  <section><h2>Alerts</h2><div class="scroll"><table id="alerts"></table></div></section>
+</main>
+<script>
+const qs = new URLSearchParams(location.search); const tok = qs.get("token");
+const api = p => fetch(p + (tok ? (p.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(tok) : "")).then(r => r.json());
+const f = (v, d=1) => v === null || v === undefined || v === "" ? "–" : (typeof v === "number" ? v.toFixed(d) : v);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const t = s => new Date(s * 1000).toLocaleTimeString();
+function table(el, cols, rows) {
+  document.getElementById(el).innerHTML = "<tr>" + cols.map(c => `<th class="${c[2]||""}">${c[0]}</th>`).join("") + "</tr>" +
+    (rows.length ? rows.map(r => "<tr>" + cols.map(c => `<td class="${c[2]||""}">${c[3] ? c[3](r[c[1]], r) : esc(f(r[c[1]]))}</td>`).join("") + "</tr>").join("")
+     : `<tr><td class="l" colspan="${cols.length}">none</td></tr>`);
+}
+const money = v => `<span class="${v > 0 ? "pos" : v < 0 ? "neg" : ""}">${f(v, 2)}</span>`;
+async function refresh() {
+  try {
+    const s = await api("/api/status");
+    const pill = (label, v, good) => `<span class="pill ${good ? "good" : "bad"}">${label}: ${v}</span> `;
+    document.getElementById("pills").innerHTML =
+      pill("MODE", s.mode, s.mode !== "LIVE") + pill("DATA", s.data, s.data === "CONNECTED") +
+      pill("EXECUTION", s.execution, true) + pill("KALSHI", s.kalshi, s.kalshi === "CONNECTED") +
+      pill("PRODUCTION KEY", s.production_key, true) + pill("PRODUCTION ORDERS", s.production_orders, s.production_orders === "DISABLED") +
+      (s.risk.kill_switch ? pill("KILL SWITCH", "ON", false) : "") + (s.risk.halted ? pill("HALTED", s.risk.halt_reason, false) : "");
+    const r = s.risk;
+    document.getElementById("kpis").innerHTML = [
+      ["Equity ($)", f(r.equity, 2)], ["Daily P&L ($)", f(r.daily_pnl, 2)], ["Drawdown", f(100 * r.drawdown, 2) + "%"],
+      ["Entries / hr", r.entries_last_hour], ["Watched", s.discovery.watch ?? "–"], ["Candidates", s.discovery.candidates ?? "–"],
+      ["Signals", s.counters.signals], ["Rejected", s.counters.rejected], ["Missed fills", s.counters.missed], ["Loop ms", f(s.loop_lag_ms)]
+    ].map(([k, v]) => `<div class="kpi"><b>${v}</b><span>${k}</span></div>`).join("");
+    document.getElementById("statusNote").textContent = `run ${s.run_id} · up ${Math.round(s.uptime_seconds/60)} min · reconciled: ${s.reconciled}`;
+    table("scanner", [["Market","ticker","l"],["Sport","sport","l"],["Price","price"],["Bid","bid"],["Ask","ask"],["Spread","spread"],
+      ["Vol(win)","volume",null,v=>f(v,0)],["Liq","liquidity",null,v=>f(v,0)],["Volat.","volatility",null,v=>f(v,2)],["High","recent_high"],["Low","recent_low"],
+      ["Vel c/m","velocity",null,v=>f(v,2)],["Accel","acceleration",null,v=>f(v,2)],["State","state","l"],["Move","movement_score",null,v=>f(v,0)],
+      ["Dip","dip_score",null,v=>f(v,0)],["Mom.","momentum_score",null,v=>f(v,0)],["Position","position","l"],["Action","action","l"]], await api("/api/scanner"));
+    table("positions", [["Market","ticker","l"],["Side","side","l"],["Qty","qty",null,v=>f(v,0)],["Entry","entry"],["Current","current"],
+      ["Unreal. $","unrealized",null,money],["Target","target"],["Stop","stop"],["Hold s","hold_seconds",null,v=>f(v,0)],["Strategy","strategy","l"],["Score","score",null,v=>f(v,0)]],
+      await api("/api/positions"));
+    for (const env of ["PAPER","SHADOW","LIVE"]) {
+      const p = await api("/api/performance?env=" + env); const m = p.summary || {};
+      document.getElementById("perf-" + env).innerHTML = m.total_trades ?
+        `<div class="kpis">${[["Net $", money(m.net_pnl)],["Gross $", f(m.gross_pnl,2)],["Fees $", f(m.fees,2)],["Trades", m.total_trades],
+          ["Win rate", f(100*m.win_rate,1)+"%"],["Expectancy $", f(m.expectancy,3)],["Profit factor", f(m.profit_factor,2)],["Max DD $", f(m.max_drawdown,2)]]
+          .map(([k,v]) => `<div class="kpi"><b>${v}</b><span>${k}</span></div>`).join("")}</div><div class="note">${esc(p.label)} — ${esc(p.evidence)}</div>`
+        : `<div class="note">${esc(p.label)} — no closed trades yet.</div>`;
+    }
+    table("signals", [["Time","ts","l",t],["Market","ticker","l"],["Strategy","strategy","l"],["Side","side","l"],["Action","action","l"],
+      ["Score","score",null,v=>f(v,0)],["Ref","entry_ref"],["Target","target"],["Stop","stop"],["Net exp.","expected_net"],
+      ["Why not","reject_reasons","l",v=>esc((v||[]).join("; ")).slice(0,160)]], await api("/api/signals?limit=40"));
+    table("alerts", [["Time","ts","l",t],["Level","level","l"],["Kind","kind","l"],["Message","message","l",v=>esc(v).slice(0,200)]], await api("/api/alerts?limit=20"));
+  } catch (e) { document.getElementById("statusNote").textContent = "dashboard error: " + e; }
+}
+refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>

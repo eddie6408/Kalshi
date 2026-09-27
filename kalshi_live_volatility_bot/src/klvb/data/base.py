@@ -153,3 +153,13 @@ class FailoverMarketDataProvider(MarketDataProvider):
     def status(self) -> dict[str, Any]:
         return {"name": self.name, "active": self.active, "failures": dict(self.failures),
                 "providers": [p.status() for p in self.providers]}
+
+
+async def market_raw(provider: MarketDataProvider, ticker: str) -> dict[str, Any]:
+    """Find a provider in a chain that can return the raw market object."""
+    chain = getattr(provider, "providers", [provider])
+    for p in chain:
+        target = getattr(p, "rest", p)
+        if hasattr(target, "market"):
+            return await target.market(ticker)
+    raise DataUnavailable("no provider can fetch market details")
