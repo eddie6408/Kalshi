@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 
 from .. import data_gates
+from .. import ledger as _ledger
 from ..alerts import ALERTS, today_key
 from ..coherence import Claim, check as check_coherence
 from ..depth import DepthBook
@@ -198,6 +199,11 @@ class ForecastStrategy:
         #: Package 14A phase 4 data-quality gates. None = not evaluated.
         self.gates = gates
         self.monitor = monitor
+        #: set by the engine; recorded on every ledger row
+        self.execution_mode = ""
+        #: what _price_one knows about the market it is on, so a skip can be
+        #: recorded with the probability and the book it was judged against
+        self._ctx: dict = {}
         #: Does the model beat the market for this city and lead time?
         #: (kalshibot/market_skill.py) None = not checked.
         self.market_skill = market_skill
@@ -234,6 +240,8 @@ class ForecastStrategy:
                 # from it is suspect - including the ones that happen to look
                 # reasonable.
                 for m in tradable:
+                    self._ctx = {"ticker": m.ticker, "book": books.get(m.ticker),
+                                 "estimate": cached.get(m.ticker)}
                     self._skip(m, "event distribution is incoherent",
                                problems[0])
                 log.warning("FORECAST  %s refused %s: %s", self.name,
@@ -365,9 +373,46 @@ class ForecastStrategy:
 
     def _skip(self, m: Market, reason: str, detail: str = "") -> None:
         self.skips.append(Skip(m.ticker, self.name, reason, detail))
+        self._ledger_skip(m, reason, detail)
+
+    def _ledger_skip(self, m: Market, reason: str, detail: str) -> None:
+        """Package 2: record the skip - with what was known - once per market,
+        reason and hour. Never blocks anything: a skip trades nothing."""
+        if self.journal is None or not hasattr(self.journal, "ledger_record"):
+            return
+        try:
+            ctx = self._ctx if self._ctx.get("ticker") == m.ticker else {}
+            book, est = ctx.get("book"), ctx.get("estimate")
+            touch = {}
+            if book is not None:
+                for side in ("yes", "no"):
+                    touch[f"{side}_ask"] = book.best_price(side, "buy")
+                    touch[f"{side}_bid"] = book.best_price(side, "sell")
+            usable = est is not None and getattr(est, "usable", False)
+            ev = (est.evidence or {}) if usable else {}
+            stub = ArbitrageOpportunity.stub(
+                strategy_type=f"forecast:{self.name}",
+                event_id=m.event_ticker or m.ticker, ticker=m.ticker,
+                stage=_ledger.stage_for(reason) or "UNMAPPED", reason=reason,
+                detail=detail,
+                opportunity_class=(OpportunityClass.WEATHER_FORECAST
+                                   if self.name.startswith("weather")
+                                   else OpportunityClass.FORECAST),
+                probability_yes=est.probability_yes if usable else None,
+                touch=touch, settlement_time=m.close_time,
+                model_version=str(ev.get("model_version") or ""),
+                fee_schedule_version=self.fees.version,
+                evidence={"lead_hours": ev.get("lead_hours"), "detail": detail[:200]})
+            stub.confidence = est.confidence if usable else 0.0
+            stub.execution_mode = self.execution_mode
+            hour = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+            self.journal.ledger_record(stub, dedupe_key=f"{m.ticker}|{reason}|{hour}")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("could not record the skip of %s: %s", m.ticker, exc)
 
     def _price_one(self, m: Market, book: DepthBook, bankroll_usd: float,
                    estimate=None) -> ArbitrageOpportunity | None:
+        self._ctx = {"ticker": m.ticker, "book": book, "estimate": estimate}
         yes_ask = book.best_price("yes", "buy")
         no_ask = book.best_price("no", "buy")
         if yes_ask is None and no_ask is None:
@@ -376,6 +421,7 @@ class ForecastStrategy:
 
         if estimate is None:
             estimate = self.estimator.estimate(m)
+            self._ctx["estimate"] = estimate
         if not estimate.usable:
             self._skip(m, "estimator declined", estimate.skip_reason or "")
             return None

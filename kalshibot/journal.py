@@ -10,10 +10,12 @@ scripts/report.py answers that from this database.
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import sqlite3
-from datetime import datetime, timezone
+import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -285,6 +287,66 @@ CREATE TABLE IF NOT EXISTS data_checks (
     provenance TEXT
 );
 
+-- Package 2. One row per EVALUATED opportunity - traded, rejected at any
+-- stage, or skipped before it was priced - keyed by the Package 1 uuid.
+-- The authoritative record of what the bot decided and what came of it.
+CREATE TABLE IF NOT EXISTS opportunity_ledger (
+    opportunity_id TEXT PRIMARY KEY,
+    dedupe_key TEXT UNIQUE,
+    detected_at TEXT NOT NULL,
+    opportunity_class TEXT,
+    strategy TEXT,
+    event_id TEXT,
+    markets TEXT,
+    direction TEXT,
+    quantity INTEGER,
+    probability_yes REAL,
+    fair_probability REAL,
+    market_probability REAL,
+    market_price_source TEXT,
+    touch_json TEXT,
+    capital_required REAL,
+    max_loss REAL,
+    max_profit REAL,
+    gross_edge REAL,
+    fees REAL,
+    net_ev REAL,
+    ev_complete INTEGER,
+    settlement_time TEXT,
+    liquidity_available INTEGER,
+    data_quality TEXT,
+    source_quality_tier INTEGER,
+    confidence REAL,
+    model_version TEXT,
+    code_version TEXT,
+    config_version TEXT,
+    fee_schedule_version TEXT,
+    execution_mode TEXT,
+    decision TEXT,
+    decision_stage TEXT,
+    rejection_reason TEXT,
+    final_state TEXT,
+    outcome_json TEXT,
+    resolved_at TEXT,
+    realised_pnl REAL,
+    hypothetical_pnl REAL,
+    hypothetical_basis TEXT,
+    record_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_detected ON opportunity_ledger(detected_at);
+CREATE INDEX IF NOT EXISTS idx_ledger_pending ON opportunity_ledger(resolved_at, settlement_time);
+
+-- The lifecycle of each ledger row: DETECTED, REJECTED, ACCEPTED, SUBMITTED,
+-- FILLED, PARTIALLY_FILLED, NOT_FILLED, EXPIRED, EXITED, SETTLED.
+CREATE TABLE IF NOT EXISTS opportunity_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    state TEXT NOT NULL,
+    detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_events_opp ON opportunity_events(opportunity_id);
+
 -- An operator acknowledging a tripped consecutive-loss breaker. Losses
 -- closed before the latest row no longer count toward the run.
 CREATE TABLE IF NOT EXISTS breaker_resets (
@@ -384,10 +446,17 @@ class Journal:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        #: Every write method holds this for its whole execute...commit, so
+        #: two workers can no longer interleave transactions on the one shared
+        #: connection (audit H1). Re-entrant: a write may call another.
+        self.lock = threading.RLock()
         try:
             self.conn.executescript(SCHEMA)
             self.conn.commit()
             self._migrate()
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_legs_opp "
+                              "ON leg_orders(opportunity_uuid)")
+            self.conn.commit()
         except sqlite3.OperationalError as exc:
             raise JournalError(
                 f"Could not open the journal database at {self.path}.\n"
@@ -513,6 +582,10 @@ class Journal:
             "model": "TEXT",
             "alt_probability": "REAL",
         },
+        # Package 2: which opportunity an execution and each of its legs -
+        # and later the exits and settlements of that position - belong to.
+        "executions": {"opportunity_uuid": "TEXT"},
+        "leg_orders": {"opportunity_uuid": "TEXT"},
         "forecasts": {
             # 14A: which source the forecast came from, the observation ids
             # behind it, and which source supplied actual_f.
@@ -614,16 +687,20 @@ class Journal:
         once already.
         """
         try:
+            uuid_ = self.uuid_for_position(ticker, side)
             self.conn.execute(
                 """INSERT INTO leg_orders
                    (ts, execution_id, ticker, side, action, requested, filled,
                     limit_price_cents, avg_price_cents, fee_usd, state,
-                    order_id, client_order_id, error)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    order_id, client_order_id, error, opportunity_uuid)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (_now(), None, ticker, side, action, filled, filled,
                  int(price_cents), float(price_cents), None, "FILLED",
-                 order_id, "", note[:300]),
+                 order_id, "", note[:300], uuid_),
             )
+            if uuid_ and action == "sell":
+                self._event(uuid_, "EXITED", f"sold {filled} {side} {ticker} "
+                                             f"@ {price_cents:.0f}c {note[:120]}")
             self.conn.commit()
         except sqlite3.Error as exc:
             log.error("could not log the %s of %s: %s", action, ticker, exc)
@@ -794,16 +871,19 @@ class Journal:
         n = abs(int(contracts))
         price = 100 if won else 0
         try:
+            uuid_ = self.uuid_for_position(ticker, side)
             self.conn.execute(
                 """INSERT INTO leg_orders
                    (ts, execution_id, ticker, side, action, requested, filled,
                     limit_price_cents, avg_price_cents, fee_usd, state,
-                    order_id, client_order_id, error)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    order_id, client_order_id, error, opportunity_uuid)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (_now(), None, ticker, side, action, n, n,
                  price, float(price), 0.0, "SETTLED",
-                 "", "", self.SETTLEMENT_NOTE),
+                 "", "", self.SETTLEMENT_NOTE, uuid_),
             )
+            if uuid_:
+                self._event(uuid_, "SETTLED", f"{ticker} {side} {n} at {price}c")
             self.conn.commit()
             return True
         except sqlite3.Error as exc:
@@ -1101,13 +1181,16 @@ class Journal:
 
     def log_trade_result(self, result, opportunity_id: int | None = None) -> int:
         op = result.opportunity
+        uuid_ = getattr(op, "opportunity_id", None)
+        if opportunity_id is None:
+            opportunity_id = getattr(op, "journal_row_id", None)
         cur = self.conn.execute(
             """INSERT INTO executions
-               (ts, opportunity_id, mode, strategy, event_id, outcome,
+               (ts, opportunity_id, opportunity_uuid, mode, strategy, event_id, outcome,
                 sets_completed, total_cost_usd, total_fees_usd,
                 realised_edge_usd, exposed, notes)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (_now(), opportunity_id, getattr(result, "mode", ""), op.strategy_type,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (_now(), opportunity_id, uuid_, getattr(result, "mode", ""), op.strategy_type,
              op.event_id, result.outcome.value, result.sets_completed,
              result.total_cost_usd, result.total_fees_usd,
              result.realised_edge_usd, int(result.exposed),
@@ -1119,13 +1202,22 @@ class Journal:
                 """INSERT INTO leg_orders
                    (ts, execution_id, ticker, side, action, requested, filled,
                     limit_price_cents, avg_price_cents, fee_usd, state,
-                    order_id, client_order_id, error)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    order_id, client_order_id, error, opportunity_uuid)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (_now(), exec_id, lx.leg.ticker, lx.leg.side, lx.leg.action,
                  lx.requested, lx.filled, lx.leg.limit_price_cents,
                  lx.avg_price_cents, lx.fee_usd, lx.state.value,
-                 lx.order_id, lx.client_order_id, lx.error[:300]),
+                 lx.order_id, lx.client_order_id, lx.error[:300], uuid_),
             )
+        if uuid_:
+            outcome = getattr(result.outcome, "value", str(result.outcome))
+            state = {"COMPLETE": "FILLED", "PARTIAL_FILLED": "PARTIALLY_FILLED",
+                     "PARTIAL_EXPOSED": "PARTIALLY_FILLED",
+                     "PARTIAL_RECOVERED": "NOT_FILLED",
+                     "ABORTED_PRE_TRADE": "EXPIRED", "FAILED": "NOT_FILLED"
+                     }.get(outcome, outcome)
+            self._event(uuid_, "SUBMITTED", f"execution {exec_id}")
+            self._event(uuid_, state, f"{outcome}; " + " | ".join(result.notes)[:200])
         self.conn.commit()
         return exec_id
 
@@ -1246,5 +1338,150 @@ class Journal:
             return [], []            # first sighting is not a change
         return sorted(seen - before), sorted(before - seen)
 
+    # ---------------- opportunity ledger (Package 2) ----------------
+    def _event(self, opportunity_id: str, state: str, detail: str = "",
+               final: bool = True) -> None:
+        """One lifecycle transition. Caller commits (or holds the lock)."""
+        self.conn.execute(
+            "INSERT INTO opportunity_events (opportunity_id, ts, state, detail) "
+            "VALUES (?,?,?,?)", (opportunity_id, _now(), state, detail[:500]))
+        if final:
+            self.conn.execute("UPDATE opportunity_ledger SET final_state=? "
+                              "WHERE opportunity_id=?", (state, opportunity_id))
+
+    def ledger_record(self, op, dedupe_key: str | None = None) -> bool:
+        """Write one evaluated opportunity. True if a row was written, False
+        if an identical one (same dedupe_key) is already there. Raises on a
+        database error - the caller decides whether that blocks a trade."""
+        rec = op.to_record()
+        ev = rec["ev"]
+        touch = (op.evidence or {}).get("touch") or {
+            l["ticker"] + ":" + l["side"]: {"ask": l["best_ask_cents"],
+                                            "bid": l["best_bid_cents"]}
+            for l in rec["legs"]}
+        cur = self.conn.execute(
+            """INSERT OR IGNORE INTO opportunity_ledger
+               (opportunity_id, dedupe_key, detected_at, opportunity_class, strategy,
+                event_id, markets, direction, quantity, probability_yes,
+                fair_probability, market_probability, market_price_source,
+                touch_json, capital_required, max_loss, max_profit, gross_edge,
+                fees, net_ev, ev_complete, settlement_time, liquidity_available,
+                data_quality, source_quality_tier, confidence, model_version,
+                code_version, config_version, fee_schedule_version,
+                execution_mode, decision, decision_stage, rejection_reason,
+                final_state, record_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (rec["opportunity_id"], dedupe_key, rec["detected_at"],
+             rec["opportunity_class"], rec["strategy"], rec["event_id"],
+             ",".join(rec["markets"]), rec["direction"], rec["quantity"],
+             (op.evidence or {}).get("probability_yes",
+                                     op.probability_yes if not op.guaranteed else None),
+             rec["fair_probability"], rec["market_probability"],
+             rec["market_price_source"], json.dumps(touch, default=str),
+             rec["capital_required"], rec["max_loss"], rec["max_profit"],
+             rec["gross_edge"], rec["fees"], ev["net_ev"], int(ev["complete"]),
+             rec["settlement_time"], (rec["liquidity"] or {}).get("available"),
+             rec["data_quality"], rec["source_quality_tier"], rec["confidence"],
+             rec["model_version"], rec["code_version"], rec["config_version"],
+             rec["fee_schedule_version"], rec["execution_mode"], rec["decision"],
+             rec["decision_stage"], rec["rejection_reason"], rec["decision"],
+             json.dumps(rec, default=str)))
+        written = cur.rowcount == 1
+        if written:
+            self._event(rec["opportunity_id"], "DETECTED", final=False)
+            if rec["decision"] != "DETECTED":
+                self._event(rec["opportunity_id"], rec["decision"],
+                            f"{rec['decision_stage']}: {rec['rejection_reason']}")
+        self.conn.commit()
+        return written
+
+    def ledger_decide(self, op) -> None:
+        """Record a later decision on an already-written opportunity (the
+        risk check comes after the gate, and it is the FINAL word)."""
+        self.conn.execute(
+            """UPDATE opportunity_ledger SET decision=?, decision_stage=?,
+               rejection_reason=?, execution_mode=? WHERE opportunity_id=?""",
+            (op.decision, op.decision_stage, op.rejection_reason,
+             op.execution_mode, op.opportunity_id))
+        self._event(op.opportunity_id, op.decision,
+                    f"{op.decision_stage}: {op.rejection_reason}")
+        self.conn.commit()
+
+    def uuid_for_position(self, ticker: str, side: str) -> str | None:
+        """The opportunity whose entry opened this ticker/side most recently."""
+        r = self.conn.execute(
+            "SELECT opportunity_uuid FROM leg_orders WHERE ticker=? AND side=? "
+            "AND action='buy' AND opportunity_uuid IS NOT NULL "
+            "ORDER BY id DESC LIMIT 1", (ticker, side)).fetchone()
+        return r[0] if r else None
+
+    def pending_outcomes(self, now_iso: str, limit: int = 200) -> list:
+        return self.conn.execute(
+            """SELECT * FROM opportunity_ledger WHERE resolved_at IS NULL
+               AND settlement_time IS NOT NULL AND settlement_time < ?
+               ORDER BY settlement_time LIMIT ?""", (now_iso, limit)).fetchall()
+
+    def set_outcome(self, opportunity_id: str, outcome: dict | None,
+                    realised: float | None, hypothetical: float | None,
+                    basis: str) -> None:
+        self.conn.execute(
+            """UPDATE opportunity_ledger SET outcome_json=?, resolved_at=?,
+               realised_pnl=?, hypothetical_pnl=?, hypothetical_basis=?
+               WHERE opportunity_id=?""",
+            (json.dumps(outcome) if outcome is not None else None, _now(),
+             realised, hypothetical, basis[:300], opportunity_id))
+        self.conn.commit()
+
+    def realised_for(self, opportunity_id: str) -> tuple[float | None, bool]:
+        """(realised P&L, fully closed?) from the fills, exits and settlement
+        legs linked to this opportunity."""
+        flows: dict = {}
+        for r in self.conn.execute(
+                "SELECT ticker, side, action, filled, avg_price_cents, "
+                "limit_price_cents FROM leg_orders WHERE opportunity_uuid=? "
+                "AND filled > 0 ORDER BY id", (opportunity_id,)):
+            f = flows.setdefault((r[0], r[1]), [0, 0, 0.0, 0.0])
+            px = float(r[4] if r[4] is not None else (r[5] or 0)) / 100.0
+            if r[2] == "buy":
+                f[0] += r[3]; f[2] += r[3] * px
+            else:
+                f[1] += r[3]; f[3] += r[3] * px
+        if not flows:
+            return None, False
+        closed = all(b == s_ for b, s_, _x, _y in flows.values())
+        pnl = sum(min(b, s_) * (g / s_ - sp / b)
+                  for b, s_, sp, g in flows.values() if b and s_)
+        return pnl, closed
+
+    def prune_ledger_records(self, days: int = 90) -> int:
+        """Drop the full JSON of old REJECTED rows; every column, and every
+        accepted or traded row, is kept."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cur = self.conn.execute(
+            "UPDATE opportunity_ledger SET record_json=NULL WHERE decision='REJECTED' "
+            "AND record_json IS NOT NULL AND detected_at < ?", (cutoff,))
+        self.conn.commit()
+        return cur.rowcount
+
     def close(self) -> None:
         self.conn.close()
+
+
+def _locked(fn):
+    @functools.wraps(fn)
+    def inner(self, *a, **kw):
+        with self.lock:
+            return fn(self, *a, **kw)
+    return inner
+
+
+#: Every method that writes. Held for the whole execute...commit (audit H1).
+_WRITERS = ("log_decision", "log_trade", "close_open_trades", "close_trade",
+            "log_forecast", "log_probability", "settle_probability", "log_leg_fill",
+            "log_settlement", "log_book_quality", "log_balance", "reset_breaker",
+            "log_scan", "log_opportunity", "log_trade_result", "start_run", "end_run",
+            "log_source_observation", "log_data_check", "save_source_health",
+            "record_settlement_sources", "ledger_record", "ledger_decide",
+            "set_outcome", "prune_ledger_records")
+for _name in _WRITERS:
+    setattr(Journal, _name, _locked(getattr(Journal, _name)))

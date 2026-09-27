@@ -280,6 +280,16 @@ loop:
 # ---------------------------------------------------------------------
 journal:
   database_path: data/journal.db
+  # Package 2 - the opportunity ledger (every evaluated opportunity, its
+  # final decision and stage, and how it turned out).
+  # If the ledger cannot record an ACCEPTED opportunity, do not trade it
+  # (research brief section 31). Can only prevent a trade, never cause one.
+  fail_closed: true
+  # Rejected rows keep every column forever; their full JSON record is
+  # dropped after this many days. Accepted and traded rows are never pruned.
+  ledger_retention_days: 90
+  # Arbitrage structures priced but not crossed, recorded per sweep (closest first).
+  near_miss_record_limit: 50
 logging:
   level: INFO
   file: logs/kalshibot.log
