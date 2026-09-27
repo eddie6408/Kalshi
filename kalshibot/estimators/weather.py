@@ -43,6 +43,15 @@ def _norm_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
+#: Bump when a model's maths or constants change, so every forecast and
+#: trade names the model that produced it (research brief section 24).
+MODEL_VERSIONS = {"ensemble": "1", "nowcast": "1"}
+
+#: Worst source tier behind each model's number (1 = the organisation that
+#: publishes it, 2 = an established redistributor - Open-Meteo).
+MODEL_SOURCE_TIER = {"ensemble": 2, "nowcast": 2}
+
+
 class WeatherTemperatureEstimator:
     name = "weather_temperature"
 
@@ -328,6 +337,8 @@ class WeatherTemperatureEstimator:
                 # Both are logged on every contract so the nowcast can be
                 # scored against the ensemble it replaced, like for like.
                 "model": model,
+                "model_version": f"{self.name}/{model}@{MODEL_VERSIONS[model]}",
+                "source_tier": MODEL_SOURCE_TIER[model],
                 "alt_model": "ensemble" if model == "nowcast" else None,
                 "alt_probability": round(ens_prob, 4) if model == "nowcast" else None,
                 "nowcast": ({

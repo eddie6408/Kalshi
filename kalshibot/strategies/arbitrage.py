@@ -26,7 +26,11 @@ from datetime import timedelta
 from ..depth import DepthBook
 from ..fees import FeeModel
 from ..models import Market
-from ..opportunity import ArbitrageOpportunity, ExecutionRisk, Leg
+from ..opportunity import (RISK_SCORE, ArbitrageOpportunity, ExecutionRisk, Leg,
+                           OpportunityClass)
+
+#: Bump when a detector's pricing logic changes, so results stay attributable.
+STRUCTURAL_MODEL_VERSION = "1"
 from ..quantity import analyse
 
 log = logging.getLogger(__name__)
@@ -201,6 +205,8 @@ class _Detector:
                 ticker=ticker, side=side, action="buy", quantity=sets,
                 limit_price_cents=w.worst_price_cents, vwap_cents=w.vwap_cents,
                 available=book.max_fillable(side, "buy"), title=title, walk=w,
+                best_ask_cents=book.best_price(side, "buy"),
+                best_bid_cents=book.best_price(side, "sell"),
             ))
 
         net = point.net_edge - self.cfg.safety_buffer_usd
@@ -228,6 +234,18 @@ class _Detector:
             min_profitable_quantity=qa.min_profitable,
             optimal_quantity=qa.optimal,
             fee_drag_pct=point.fee_drag_pct,
+            # --- Package 1 ---
+            opportunity_class=OpportunityClass.STRUCTURAL_ARB,
+            direction=("buy " + legs[0].side) if len(legs) == 1 else f"basket of {len(legs)}",
+            liquidity={"depth_at_best": min(
+                           (l.walk.levels[0].contracts if l.walk and l.walk.levels else 0)
+                           for l in legs),
+                       "available": min(depths)},
+            data_quality="OK",
+            source_quality_tier=1,          # the exchange's own book
+            risk_score=RISK_SCORE[_risk_for(len(plan), min(depths), sets)],
+            model_version=f"structural/{strategy_type}@{STRUCTURAL_MODEL_VERSION}",
+            fee_schedule_version=self.fees.version,
         )
 
 
@@ -488,6 +506,11 @@ class StructuralArbitrageScanner:
         found += self.same_market.find(markets, books)
         found += self.ladder.find(markets, books)
         found += self.basket.find(event_id, markets, books, is_exclusive)
+        # Settlement: the last of the legs' markets to close.
+        closes = {m.ticker: getattr(m, "close_time", None) for m in markets}
+        for op in found:
+            times = [closes.get(t) for t in op.market_tickers if closes.get(t)]
+            op.settlement_time = max(times) if times else None
         return found
 
     def scan(self, universe, books: dict[str, DepthBook]) -> list[ArbitrageOpportunity]:

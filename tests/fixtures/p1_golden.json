@@ -1,0 +1,68 @@
+{
+ "basket": [
+  {
+   "accepted": true,
+   "execution_risk": "medium",
+   "fees": 5.88,
+   "fingerprint": "exclusive_basket|M0:no:buy|M1:no:buy|M2:no:buy|M3:no:buy",
+   "floor": 300.0,
+   "gross_cost": 280.0,
+   "net_edge": 14.12,
+   "quantity": 100,
+   "reason": "OK"
+  }
+ ],
+ "forecast_72": [
+  {
+   "accepted": true,
+   "execution_risk": "none",
+   "fees": 0.27,
+   "fingerprint": "forecast:fake|KXFAKE-1:yes:buy",
+   "floor": 0.0,
+   "gross_cost": 9.76,
+   "net_edge": 1.49,
+   "quantity": 16,
+   "reason": "OK"
+  }
+ ],
+ "forecast_no_side": [],
+ "ladder": [
+  {
+   "accepted": true,
+   "execution_risk": "medium",
+   "fees": 1.61,
+   "fingerprint": "ladder|EV-B70:yes:buy|EV-B75:no:buy",
+   "floor": 50.0,
+   "gross_cost": 42.5,
+   "net_edge": 5.89,
+   "quantity": 50,
+   "reason": "OK"
+  }
+ ],
+ "same_market": [
+  {
+   "accepted": true,
+   "execution_risk": "medium",
+   "fees": 1.72,
+   "fingerprint": "same_market|T:no:buy|T:yes:buy",
+   "floor": 50.0,
+   "gross_cost": 46.0,
+   "net_edge": 2.28,
+   "quantity": 50,
+   "reason": "OK"
+  }
+ ],
+ "same_market_deep": [
+  {
+   "accepted": true,
+   "execution_risk": "medium",
+   "fees": 1.22,
+   "fingerprint": "same_market|T:no:buy|T:yes:buy",
+   "floor": 35.0,
+   "gross_cost": 32.95,
+   "net_edge": 0.83,
+   "quantity": 35,
+   "reason": "OK"
+  }
+ ]
+}

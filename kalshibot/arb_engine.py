@@ -523,17 +523,29 @@ class ArbitrageEngine:
         return rel
 
     def _judge(self, op: ArbitrageOpportunity, report: ScanReport) -> None:
+        # Package 1: where and how this was priced. Bookkeeping only - the
+        # gate and risk decisions below are unchanged.
+        op.execution_mode = self.mode.value
+        op.market_price_source = (
+            "production" if str(self.s.get("execution.paper_book_source", "demo")
+                                or "demo").lower() == "live" else "demo")
         decision = self.gate.evaluate(op)
+        if not decision.accepted:
+            op.decision, op.decision_stage = "REJECTED", "GATE"
+            op.rejection_reason = decision.reason.value
         if self.journal:
             self.journal.log_opportunity(self.mode.value, op, decision)
 
         if decision.accepted:
             ok, why = self._risk_ok(op)
             if not ok:
+                op.decision, op.decision_stage, op.rejection_reason = (
+                    "REJECTED", "RISK", why)
                 report.rejections[f"RISK:{why}"] = report.rejections.get(
                     f"RISK:{why}", 0) + 1
                 log.info("ARBITRAGE REJECTED  %s | risk: %s", op.summary(), why)
                 return
+            op.decision, op.decision_stage = "ACCEPTED", "RISK"
             report.accepted.append(op)
             log.info("ARBITRAGE FOUND\n%s", op.explain())
         else:

@@ -48,6 +48,13 @@ class FeeModel:
         self.assume_taker = bool(cfg.get("assume_taker", True))
         self.safety = float(cfg.get("safety_multiplier", 1.0))
 
+    @property
+    def version(self) -> str:
+        """Which fee assumptions priced a trade (research brief section 13).
+        Static config until the versioned fee engine replaces it."""
+        return (f"static-config:taker={self.taker_rate}:maker={self.maker_rate}"
+                f":safety={self.safety}:assume_taker={self.assume_taker}")
+
     def entry_fee_usd(self, price_cents: float, contracts: int, is_maker: bool = False) -> float:
         if is_maker and not self.assume_taker:
             return maker_fee_usd(price_cents, contracts, self.maker_rate, self.safety)

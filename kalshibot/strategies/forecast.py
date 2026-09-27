@@ -43,7 +43,8 @@ from ..depth import DepthBook
 from ..edge import contracts_from_kelly, evaluate
 from ..fees import FeeModel
 from ..models import Market
-from ..opportunity import ArbitrageOpportunity, ExecutionRisk, Leg
+from ..opportunity import (RISK_SCORE, ArbitrageOpportunity, ExecutionRisk, Leg,
+                           OpportunityClass)
 
 log = logging.getLogger(__name__)
 
@@ -545,7 +546,14 @@ class ForecastStrategy:
         leg = Leg(ticker=m.ticker, side=edge.side, action="buy",
                   quantity=quantity, limit_price_cents=walk.worst_price_cents,
                   vwap_cents=vwap, available=available,
-                  title=m.subtitle or m.title, walk=walk)
+                  title=m.subtitle or m.title, walk=walk,
+                  best_ask_cents=book.best_price(edge.side, "buy"),
+                  best_bid_cents=book.best_price(edge.side, "sell"))
+        ev_info = estimate.evidence or {}
+        problems = [p for p in (
+            "degraded source" if ev_info.get("degraded_source") else "",
+            f"observation: {ev_info.get('observation_suspect')}"
+            if ev_info.get("observation_suspect") else "") if p]
 
         return ArbitrageOpportunity(
             strategy_type=f"forecast:{self.name}",
@@ -587,4 +595,19 @@ class ForecastStrategy:
             confidence=estimate.confidence,
             estimator=self.name,
             ev_usd=ev,
+            # --- Package 1 ---
+            opportunity_class=(OpportunityClass.WEATHER_FORECAST
+                               if self.name.startswith("weather")
+                               else OpportunityClass.FORECAST),
+            direction=f"buy {edge.side}",
+            fair_probability=edge.win_probability,
+            market_probability=implied_at_size,
+            settlement_time=m.close_time,
+            liquidity={"depth_at_best": (walk.levels[0].contracts if walk.levels else 0),
+                       "available": available},
+            data_quality="OK" if not problems else "DEGRADED: " + "; ".join(problems),
+            source_quality_tier=ev_info.get("source_tier"),
+            risk_score=RISK_SCORE[ExecutionRisk.NONE],
+            model_version=str(ev_info.get("model_version") or f"{self.name}@unversioned"),
+            fee_schedule_version=self.fees.version,
         )
