@@ -701,7 +701,11 @@ market_state:
 # Turn it on once you have watched a scan or two with it off, so you have
 # something to compare the hit rate against.
 feed:
-  enabled: false
+  # ON since 2026-09-27 (phase C). Baseline with it off, over two days:
+  # 0-1% of book reads served from cache, 88% stale by the time they were
+  # needed. Live test before enabling: 18 books snapshotted, 10/10 reads
+  # served from cache.
+  enabled: true
   # Demo only. The production lockout checks this URL exactly as it checks the
   # REST endpoint: a market-data socket pointed at production is still
   # production.
@@ -717,6 +721,10 @@ feed:
   reconnect_min: 2
   reconnect_max: 60
   recv_timeout: 5
+  # When all subscription slots are full and the markets being looked at have
+  # moved on (tomorrow's weather, a new ladder), resubscribe to the current
+  # working set - at most this often, since it costs a reconnect.
+  rollover_seconds: 3600
 
 # How the work is divided. Each worker runs on its OWN clock, in this one
 # process, so a strategy that needs six series does not wait on one that needs

@@ -62,6 +62,10 @@ class FeedConfig:
     reconnect_min: float = 2.0
     reconnect_max: float = 60.0
     recv_timeout: float = 5.0
+    #: When every subscription slot is taken and the markets being looked at
+    #: have moved on (tomorrow's weather tickers, a new ladder), reset to the
+    #: current working set - at most this often, since it means a reconnect.
+    rollover_seconds: float = 3600.0
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "FeedConfig":
@@ -75,6 +79,7 @@ class FeedConfig:
             reconnect_min=float(d.get("reconnect_min", 2.0)),
             reconnect_max=float(d.get("reconnect_max", 60.0)),
             recv_timeout=float(d.get("recv_timeout", 5.0)),
+            rollover_seconds=float(d.get("rollover_seconds", 3600.0)),
         )
 
 
@@ -132,22 +137,51 @@ class KalshiFeed:
         self._wanted: set[str] = set()
         self._sid_seq: dict[int, int] = {}
         self._pending_resnapshot: set[str] = set()
+        self._last_rollover = time.monotonic()
+        # The store serves a quiet book this feed maintains for as long as
+        # the connection is up (MarketState._fresh).
+        if hasattr(state, "feed_live"):
+            state.feed_live = lambda: self.ws is not None
 
     # ------------------------------------------------------------------
     def follow(self, tickers) -> None:
-        """Ask for these markets. Safe to call repeatedly and before connecting."""
+        """Ask for these markets. Safe to call repeatedly and before connecting.
+
+        `tickers` is the current working set, most recent first. Subscriptions
+        used to only ever grow: once the slots were full (one arbitrage sweep
+        could do it) nothing new was followed again - including the next
+        day's weather markets. Now, when full and the working set has moved
+        on, the feed resets to the working set and reconnects, at most once
+        per rollover_seconds.
+        """
+        tickers = [t for t in tickers if t]
+        rolled = False
         with self._lock:
-            new = [t for t in tickers if t and t not in self._wanted]
-            room = self.cfg.max_subscriptions - len(self._wanted)
-            if room <= 0:
-                return
-            new = new[:room]
+            new = [t for t in tickers if t not in self._wanted]
             if not new:
                 return
-            self._wanted.update(new)
-            self.state.subscribed.update(new)
+            room = self.cfg.max_subscriptions - len(self._wanted)
+            if room < len(new) and (time.monotonic() - self._last_rollover
+                                    >= self.cfg.rollover_seconds):
+                keep = tickers[:self.cfg.max_subscriptions]
+                self._wanted = set(keep)
+                self.state.subscribed.clear()
+                self.state.subscribed.update(keep)
+                self._last_rollover = time.monotonic()
+                rolled = True
+            else:
+                new = new[:max(0, room)]
+                if not new:
+                    return
+                self._wanted.update(new)
+                self.state.subscribed.update(new)
             ws = self.ws
-        if ws is not None:
+        if rolled:
+            # Reconnecting resubscribes to exactly the new set.
+            log.info("FEED  working set moved on; following %d current markets",
+                     len(self._wanted))
+            self._drop("resubscribing to the current working set")
+        elif ws is not None:
             self._send_subscribe(new)
 
     # ------------------------------------------------------------------

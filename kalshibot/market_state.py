@@ -134,6 +134,16 @@ class MarketState:
         self._markets: OrderedDict[str, MarketEntry] = OrderedDict()
         #: tickers the feed is subscribed to, so a reconnect can restore them
         self.subscribed: set[str] = set()
+        #: Set by the feed: True while its connection is up. A book the live
+        #: feed maintains is CURRENT however long it has been quiet - the
+        #: exchange would have sent a delta if it had changed - so it is served
+        #: past max_book_age. Without this, a quiet demo market went back to
+        #: REST every 20 seconds and the feed could not raise the hit rate.
+        #: A dropped connection or a sequence gap distrusts the book anyway.
+        self.feed_live = None
+        #: ...up to this age, as a backstop against a feed that is up but
+        #: somehow not delivering.
+        self.max_fed_age = 3600.0
 
     # ------------------------------------------------------------------
     # Reading
@@ -151,7 +161,7 @@ class MarketState:
             if entry is not None:
                 if not entry.trusted:
                     self.stats.book_untrusted += 1
-                elif limit <= 0 or entry.age_seconds() > limit:
+                elif not self._fresh(entry, limit):
                     self.stats.book_stale += 1
                 else:
                     self._books.move_to_end(ticker)
@@ -191,6 +201,17 @@ class MarketState:
         self.put_market(market, source=Source.REST)
         return market
 
+    def _fresh(self, entry, limit: float) -> bool:
+        """May this cached book be served? A limit of 0 always says no."""
+        if limit <= 0:
+            return False
+        age = entry.age_seconds()
+        if age <= limit:
+            return True
+        return (entry.source == Source.WS and entry.ticker in self.subscribed
+                and self.feed_live is not None and bool(self.feed_live())
+                and age <= self.max_fed_age)
+
     def get_depths(self, tickers, depth: int = 50, workers: int = 8,
                    max_age: float | None = None) -> dict:
         """Many books at once - the call a scan actually makes.
@@ -212,7 +233,7 @@ class MarketState:
                 elif not entry.trusted:
                     self.stats.book_untrusted += 1
                     misses.append(ticker)
-                elif limit <= 0 or entry.age_seconds() > limit:
+                elif not self._fresh(entry, limit):
                     self.stats.book_stale += 1
                     misses.append(ticker)
                 else:
