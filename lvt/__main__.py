@@ -62,7 +62,12 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = load_config()
     from lvt import logsetup
-    logsetup.setup(cfg.path(cfg.app.log_dir), console_level="INFO" if a.cmd in ("backtest", "oos") else "WARNING")
+    if a.cmd == "selftest":
+        # synthetic test trades must never appear in the production logs
+        import logging
+        logging.disable(logging.CRITICAL)
+    else:
+        logsetup.setup(cfg.path(cfg.app.log_dir), console_level="INFO" if a.cmd in ("backtest", "oos") else "WARNING")
     state_path = cfg.path(cfg.app.state_db)
 
     if a.cmd == "run":
