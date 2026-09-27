@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+config/local.toml
+data/
+logs/
+*.pem
+*.key

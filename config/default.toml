@@ -1,0 +1,243 @@
+# Kalshi Live Volatility Trader - default configuration.
+#
+# Every threshold the bot uses lives here. Override any value in
+# config/local.toml (gitignored) - it is merged on top of this file.
+# Prices are in CENTS (1-99) unless the key says otherwise; money in USD.
+#
+# TRADING MODE IS NOT SET HERE. It comes from the TRADING_MODE environment
+# variable (.env) and defaults to PAPER. See docs/OPERATIONS.md.
+
+[app]
+data_dir = "data"
+log_dir = "logs"
+state_db = "data/lvt.db"
+tape_db = "data/tape.db"
+timezone = "UTC"                 # daily-loss day boundary
+
+[kalshi]
+base_url = "https://api.elections.kalshi.com/trade-api/v2"
+# Public market data is unauthenticated. The production key is only ever
+# loaded in LIVE mode (see lvt/live_gate.py).
+request_timeout_s = 10
+max_requests_per_second = 6.0     # shared budget for ALL public calls
+burst = 6
+backoff_on_429_s = 5.0
+max_clock_skew_s = 5.0            # vs the HTTP Date header; worse -> fail closed
+
+[discovery]
+full_sweep_interval_s = 3600      # page every open market (~120 pages)
+sweep_page_pause_s = 0.5
+series_refresh_interval_s = 86400 # /series (category + fee schedule), ~18 MB
+universe_min_volume_24h = 500     # contracts; below this a market is ignored
+include_categories = ["Sports", "Crypto", "Financials", "Economics", "Politics", "Elections", "Climate and Weather", "Entertainment", "World", "Companies", "Science and Technology"]
+exclude_series_prefixes = []
+category_weight = { Sports = 1.0, Crypto = 0.8, default = 0.6 }
+min_minutes_to_close = 10
+probe_size = 400                  # top universe markets polled on the slow tier
+probe_interval_s = 30
+watch_size = 60                   # hot tier, polled every quote_interval_s
+watch_min_dwell_s = 600           # hysteresis: stay hot at least this long
+quote_interval_s = 2.0
+quote_batch_size = 50
+depth_levels = 10
+depth_requests_per_cycle = 3      # order books fetched per quote cycle
+depth_max_age_s = 6.0             # older depth is ignored by the fill model
+
+[context]
+enabled = true
+milestone_refresh_interval_s = 600
+live_data_interval_s = 15         # per hot event
+max_live_data_requests_per_cycle = 1
+mlb_statsapi_enabled = true
+
+[volatility]
+history_s = 1800
+short_window_s = 60
+medium_window_s = 300
+long_window_s = 900
+meaningful_move_cents = 1.0
+# realised volatility regimes: RMS of 1-minute mid changes, in cents
+vol_low = 0.4
+vol_high = 1.5
+vol_extreme = 4.0
+trend_strong_velocity = 1.0       # cents / minute
+trend_weak_velocity = 0.3
+trend_min_r2 = 0.35
+
+[eligibility]
+min_volatility = 0.3              # realised vol (cents per minute, medium window)
+min_liquidity_usd = 50.0          # notional resting at the touch, both sides
+min_volume = 50                   # contracts traded in the long window
+max_spread_cents = 3.0
+max_data_age_s = 6.0
+min_movement_cents = 2.0          # range over the long window
+min_price = 5.0
+max_price = 95.0
+
+[strategies.DIP]
+enabled = true
+version = "REACTIVE_DIP_V1"
+side = "yes"                      # buy YES after a YES dip
+lookback_s = 900
+min_drop_cents = 6.0
+min_drop_pct = 0.08
+min_decline_velocity = 0.8        # cents / minute from high to low
+min_stabilize_s = 20
+min_bounce_cents = 2.0
+max_retrace_frac = 0.5            # already retraced more -> too late
+target_retrace_frac = 0.6
+stop_buffer_cents = 2.0
+min_entry_price = 8.0
+max_entry_price = 90.0
+max_short_decline_velocity = -0.2 # short-window slope must be above this
+min_score = 60
+
+[strategies.REVERSAL]
+# "Sell into an increase": YES spiked then turns down = NO dipped and turns up.
+# Implemented as the DIP detector on the NO side - Kalshi has no short sale,
+# downside exposure is BUYING NO.
+enabled = true
+version = "REACTIVE_REVERSAL_V1"
+side = "no"
+lookback_s = 900
+min_drop_cents = 6.0
+min_drop_pct = 0.08
+min_decline_velocity = 0.8
+min_stabilize_s = 20
+min_bounce_cents = 2.0
+max_retrace_frac = 0.5
+target_retrace_frac = 0.6
+stop_buffer_cents = 2.0
+min_entry_price = 8.0
+max_entry_price = 90.0
+max_short_decline_velocity = -0.2
+min_score = 60
+
+[strategies.MOMENTUM]
+enabled = true
+version = "REACTIVE_MOMENTUM_V1"
+side = "yes"
+window_s = 300
+min_rise_cents = 4.0
+min_velocity = 1.5                # cents / minute (regression slope)
+min_r2 = 0.5
+min_up_fraction = 0.6
+min_confirm_obs = 3               # consecutive non-decreasing observations
+accel_ratio = 0.8                 # recent-half slope >= ratio * first-half slope
+min_volume = 100                  # contracts traded inside the window
+max_chase_cents = 15.0            # rise beyond this = exhausted, no trade
+target_minutes = 4.0              # project velocity this far for the target
+max_target_cents = 12.0
+min_target_cents = 4.0
+stop_cents = 3.0
+min_entry_price = 10.0
+max_entry_price = 85.0
+min_score = 60
+
+[strategies.DOWNTREND]
+# "Sell into a decline": confirmed YES downward momentum = NO upward momentum.
+enabled = true
+version = "REACTIVE_DOWNTREND_V1"
+side = "no"
+window_s = 300
+min_rise_cents = 4.0
+min_velocity = 1.5
+min_r2 = 0.5
+min_up_fraction = 0.6
+min_confirm_obs = 3
+accel_ratio = 0.8
+min_volume = 100
+max_chase_cents = 15.0
+target_minutes = 4.0
+max_target_cents = 12.0
+min_target_cents = 4.0
+stop_cents = 3.0
+min_entry_price = 10.0
+max_entry_price = 85.0
+min_score = 60
+
+[signals]
+min_history_s = 300               # warm-up: no entries until a market has this much history
+cooldown_s = 120                  # per market+strategy after a signal
+market_cooldown_after_exit_s = 300
+min_net_edge_cents = 2.0          # target - entry - fees - slippage buffer
+min_reward_risk = 0.5          # NET of fees on both legs; win rate decides the rest - measured by the labeler, not assumed
+slippage_buffer_cents = 1.0
+
+[exits]
+trail_activation_cents = 3.0
+trail_distance_cents = 2.0
+momentum_exit_velocity = 0.8      # cents/min AGAINST the position (short window)
+reversal_exit_velocity = 1.2
+max_hold_s = 1800
+liquidity_exit_enabled = true
+liquidity_exit_spread_cents = 8.0
+settlement_buffer_s = 600         # exit when the market closes within this
+settlement_price_cents = 97.0     # held side bid at/above this -> take it
+exit_slippage_cents = 2.0         # limit below the bid for normal exits
+emergency_slippage_cents = 5.0
+
+[risk]
+paper_starting_equity = 1000.0
+risk_per_trade_pct = 0.01         # of equity, measured entry->stop + fees
+max_position_contracts = 200
+max_position_cost_usd = 100.0
+max_total_exposure_usd = 400.0
+max_event_exposure_usd = 150.0    # correlated markets share an event
+max_concurrent_positions = 5
+max_daily_loss_usd = 50.0
+max_strategy_daily_loss_usd = 25.0
+max_trades_per_hour = 20
+max_entry_slippage_cents = 2.0    # limit price above the signal ask
+max_spread_cents = 3.0
+min_liquidity_usd = 50.0
+max_depth_participation = 0.25    # of displayed size at our limit
+target_volatility = 1.0           # size scales by target/realised (capped 1)
+drawdown_halving_pct = 0.05       # halve size when equity is this far off peak
+daily_loss_policy = "manage"      # "manage" (exit engine keeps running) | "flatten"
+
+[execution]
+latency_ms = 250                  # signal -> exchange (added to data age)
+latency_jitter_ms = 150
+depth_participation = 0.5         # share of displayed size we assume we get
+touch_miss_probability = 0.05     # someone beats us to the touch
+reject_if_data_older_than_s = 6.0
+order_ttl_s = 10                  # paper IOC resolves on the first snapshot after arrival
+reconcile_interval_s = 60
+
+[kill_switch]
+file = "data/KILL_SWITCH"         # touch it to stop new orders
+cancel_open_orders = true
+flatten_positions = false
+
+[alerts]
+dedupe_window_s = 900
+# ALERT_WEBHOOK_URL (env) optionally receives a JSON POST per alert.
+max_slippage_alert_cents = 4.0
+max_trades_per_hour_alert = 30
+
+[health]
+interval_s = 60
+min_free_disk_gb = 5.0
+max_rss_mb = 600
+tape_retention_days = 30
+stale_data_alert_s = 60
+
+[dashboard]
+enabled = true
+host = "127.0.0.1"
+port = 8787
+
+[labeler]
+interval_s = 300
+horizons_s = [60, 300, 900]
+
+[readiness]
+min_paper_trades = 200
+min_paper_events = 20
+min_paper_days = 14
+min_backtest_trades = 200
+min_oos_trades = 50
+min_shadow_days = 7
+min_shadow_trades = 50
+require_positive_expectancy = true

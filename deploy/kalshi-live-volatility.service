@@ -1,0 +1,34 @@
+[Unit]
+Description=Kalshi Live Volatility Trader (standalone; PAPER unless explicitly authorized)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=eddie
+Group=eddie
+WorkingDirectory=/opt/kalshi/live-volatility
+ExecStart=/opt/kalshi/live-volatility/.venv/bin/python -m lvt run
+Restart=on-failure
+RestartSec=15
+# 78 = the live gate refused LIVE mode: stay down until a human fixes it
+RestartPreventExitStatus=78
+# Resource isolation from the other bot on this droplet
+CPUQuota=60%
+MemoryMax=900M
+MemoryHigh=700M
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/kalshi/live-volatility/data /opt/kalshi/live-volatility/logs
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kalshi-live-volatility
+
+[Install]
+WantedBy=multi-user.target
