@@ -1,0 +1,240 @@
+# KALSHI LIVE VOLATILITY TRADER - default configuration
+#
+# Every threshold is configurable. Copy this file to config/local.toml (git-ignored)
+# and override only what you need; values in local.toml are merged over these.
+# A handful of operational switches can also be set by environment variable
+# (see .env.example) and those always win.
+#
+# Units: prices are in CENTS of the YES contract (0-100), money in DOLLARS,
+# durations in SECONDS unless the key says otherwise.
+
+[app]
+name = "kalshi_live_volatility_bot"
+# PAPER is the default and the only mode that starts without extra steps.
+trading_mode = "PAPER"          # PAPER | SHADOW | LIVE
+data_dir = "data"               # database, kill-switch file, run markers
+log_dir = "logs"
+timezone = "America/New_York"   # used for the daily-loss day boundary and time-of-day reports
+loop_interval_seconds = 2.0     # main decision loop cadence
+random_seed = 1337              # paper fill model RNG seed (deterministic replays)
+
+[kalshi]
+# Public market data needs NO credentials. These URLs are used for data in every mode.
+rest_base_url = "https://api.elections.kalshi.com/trade-api/v2"
+ws_url = "wss://api.elections.kalshi.com/trade-api/ws/v2"
+demo_rest_base_url = "https://demo-api.kalshi.co/trade-api/v2"
+# Shared-IP courtesy: the other bot on the VPS may use the same public IP.
+# Kalshi Basic tier allows ~20 reads/s; stay well under it.
+max_requests_per_second = 6.0
+request_timeout_seconds = 8.0
+max_retries = 3
+
+[data]
+# Primary feed: public REST polling (no key). Optional websocket feed needs a key (read-only use).
+use_websocket = false
+market_refresh_seconds = 90      # full open-market discovery sweep
+watchlist_poll_seconds = 2.0     # top-of-book refresh for watched markets (batched request)
+orderbook_poll_seconds = 4.0     # depth refresh for markets with positions or near-signal
+trades_poll_seconds = 6.0        # trade prints for watched markets (volume + maker fill model)
+max_watchlist = 30
+max_data_age_seconds = 10.0      # older than this = STALE_DATA = no trade
+emergency_data_age_seconds = 45.0
+snapshot_heartbeat_seconds = 30  # store an unchanged snapshot at most this often
+sports_context_enabled = true    # Kalshi milestones / live_data (context only, never a prediction)
+sports_context_poll_seconds = 30
+retention_days = 45              # prune raw snapshots older than this
+discovery_max_close_days = 21    # server-side close_time filter for the discovery sweep
+discovery_max_pages = 25         # x1000 markets per page
+orderbook_depth = 10
+
+[scanner]
+# Categories that are scanned. Sports is the primary target but others are allowed.
+categories = ["Sports", "Economics", "Financials", "Crypto", "Climate and Weather", "Politics", "Entertainment", "Companies"]
+prefer_categories = ["Sports"]
+exclude_multivariate = true       # combo/parlay markets are illiquid for this strategy
+min_volume_24h = 500              # contracts
+min_open_interest = 200
+min_time_to_close_seconds = 900   # need room to trade before settlement
+max_time_to_close_hours = 72
+min_price_cents = 5               # avoid the tails; fees and headroom are poor there
+max_price_cents = 95
+
+[eligibility]
+min_volatility = 0.6              # realized vol, cents per sqrt(minute)
+min_liquidity_contracts = 100      # displayed size within depth_window_cents on the entry side
+min_volume_window = 20            # contracts traded inside the volatility window
+max_spread_cents = 3
+min_movement_cents = 4            # high-low range inside the lookback window
+max_data_age_seconds = 10.0
+depth_window_cents = 3
+
+[volatility]
+short_window_seconds = 30
+medium_window_seconds = 120
+long_window_seconds = 600
+min_samples = 8
+meaningful_move_cents = 1.0
+# regime thresholds (realized vol, cents per sqrt(minute))
+regime_normal = 0.6
+regime_high = 1.5
+regime_extreme = 4.0
+# trend thresholds (cents per minute on the medium window)
+trend_weak = 0.8
+trend_strong = 3.0
+
+[fees]
+# Kalshi General Trading Fee: ceil_to_cent(multiplier * 0.07 * C * P * (1-P)).
+# Maker fee (series with fee_type=quadratic_with_maker_fees): 0.0175 * C * P * (1-P).
+# Per-series fee_type / fee_multiplier are fetched from /series and override these defaults.
+taker_rate = 0.07
+maker_rate = 0.0175
+default_fee_multiplier = 1.0
+default_fee_type = "quadratic_with_maker_fees"   # conservative default when unknown
+
+[costs]
+# Extra safety margin required above modeled fees+spread+slippage before entering.
+min_net_edge_cents = 1.5
+expected_slippage_ticks = 1.0
+
+[strategies]
+enabled = ["DIP", "MOMENTUM", "REVERSAL", "DOWNTREND"]
+min_signal_score = 60
+
+[strategies.dip]
+version = "REACTIVE_DIP_V1"
+lookback_seconds = 600
+min_drop_cents = 7
+min_drop_pct = 0.10
+min_rebound_cents = 2
+max_rebound_fraction = 0.55       # if price already recovered more than this share of the drop, it's late
+stabilization_seconds = 20        # no new low for at least this long
+max_collapse_velocity = -2.0      # cents/min on the short window; faster than this = falling knife
+target_retrace_fraction = 0.5     # target = trough + 50% of the drop... capped at local high
+stop_buffer_cents = 2
+max_hold_seconds = 900
+entry_style = "taker"             # taker | maker
+
+[strategies.momentum]
+version = "REACTIVE_MOMENTUM_V1"
+lookback_seconds = 180
+min_move_cents = 5
+min_persistence = 0.6             # share of non-zero mid changes in the move direction
+confirm_samples = 3               # consecutive observations confirming the move
+min_velocity = 1.5                # cents/min on the short window
+min_volume_ratio = 1.3            # window volume rate / baseline volume rate
+max_extension_cents = 15          # move already bigger than this -> exhausted, don't chase
+min_headroom_cents = 8            # distance to 99c that must remain
+target_cents = 5
+trail_cents = 3
+stop_cents = 4
+max_hold_seconds = 600
+entry_style = "taker"
+
+[strategies.reversal]
+# Mirror of DIP on the NO side: YES spiked up, stalled, and started rolling over -> buy NO.
+version = "REACTIVE_REVERSAL_V1"
+lookback_seconds = 600
+min_drop_cents = 7                # measured on the NO price (= YES spike size)
+min_drop_pct = 0.10
+min_rebound_cents = 2
+max_rebound_fraction = 0.55
+stabilization_seconds = 20
+max_collapse_velocity = -2.0
+target_retrace_fraction = 0.5
+stop_buffer_cents = 2
+max_hold_seconds = 900
+entry_style = "taker"
+
+[strategies.downtrend]
+# Mirror of MOMENTUM on the NO side: YES falling with persistence -> buy NO.
+version = "REACTIVE_DOWNTREND_V1"
+lookback_seconds = 180
+min_move_cents = 5
+min_persistence = 0.6
+confirm_samples = 3
+min_velocity = 1.5
+min_volume_ratio = 1.3
+max_extension_cents = 15
+min_headroom_cents = 8
+target_cents = 5
+trail_cents = 3
+stop_cents = 4
+max_hold_seconds = 600
+entry_style = "taker"
+
+[exits]
+trailing_activation_cents = 3     # trailing stop arms once the position is up this much (at exit price)
+trailing_distance_cents = 3
+momentum_exit_velocity = -1.5     # cents/min against the position on the short window
+settlement_exit_seconds = 600     # flatten this long before close
+max_exit_spread_cents = 6         # liquidity exit trigger
+min_exit_depth_contracts = 20
+exit_slippage_ticks = 2           # limit price allowance for protective exits
+
+[risk]
+starting_paper_equity = 1000.0
+max_position_contracts = 50
+max_risk_per_trade = 10.0         # dollars at risk (entry - stop) * contracts
+max_position_notional = 40.0
+max_market_exposure = 40.0
+max_event_exposure = 60.0
+max_account_exposure = 200.0
+max_concurrent_positions = 5
+max_positions_per_event = 1       # markets inside one event are highly correlated
+max_daily_loss = 50.0
+max_strategy_daily_loss = 25.0
+on_daily_loss = "manage"          # manage = keep managing exits normally; flatten = exit everything
+max_trades_per_hour = 20
+max_trades_per_market_per_hour = 3
+market_cooldown_seconds = 120
+max_holding_seconds = 1800
+max_slippage_cents = 3
+max_spread_cents = 3
+min_liquidity_contracts = 100
+max_depth_participation = 0.25    # never take more than this share of displayed size
+drawdown_size_reduction_start = 0.05   # start shrinking size at 5% drawdown
+drawdown_size_floor = 0.25
+
+[paper]
+base_latency_ms = 250             # order submit -> exchange (modeled)
+latency_jitter_ms = 150
+reject_probability = 0.01
+depth_participation = 0.5         # share of displayed size we assume we can actually take
+assumed_depth_when_unknown = 10   # contracts, very conservative
+maker_queue_fraction = 0.3        # share of traded-through volume credited to a resting paper order
+maker_order_ttl_seconds = 20
+
+[shadow]
+fetch_fresh_book_on_submit = true
+
+[live]
+# LIVE is refused unless every readiness check passes and a human has authorized it.
+time_in_force = "immediate_or_cancel"
+use_post_only_for_maker = true
+cancel_orders_on_kill = true
+reconcile_interval_seconds = 30
+
+[readiness]
+min_paper_closed_trades = 300
+min_paper_days = 14
+min_distinct_events = 50
+min_shadow_closed_trades = 100
+min_shadow_days = 7
+require_positive_oos_expectancy = true
+
+[dashboard]
+enabled = true
+host = "127.0.0.1"                # reach it through an SSH tunnel; do not expose publicly
+port = 8765
+
+[alerts]
+webhook_url_env = "KLVB_ALERT_WEBHOOK_URL"   # env var holding a Slack/Discord-compatible webhook URL
+dedupe_seconds = 300
+abnormal_slippage_cents = 3
+max_trades_per_hour_alert = 15
+
+[health]
+interval_seconds = 30
+max_rss_mb = 600
+max_db_mb = 4000
+min_free_disk_mb = 1500

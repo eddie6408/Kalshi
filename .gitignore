@@ -1,0 +1,22 @@
+# secrets - never commit
+.env
+*.env
+!.env.example
+*.pem
+*.key
+**/secrets/
+# runtime state
+kalshi_live_volatility_bot/data/
+kalshi_live_volatility_bot/logs/
+kalshi_live_volatility_bot/config/local.toml
+*.sqlite3
+*.sqlite3-*
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+build/
+dist/
