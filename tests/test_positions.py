@@ -72,5 +72,26 @@ class TestPositions(unittest.TestCase):
         self.assertEqual(PositionBook(self.db, "LIVE", "r3").load_open(), [])
 
 
+class TestTrailing(unittest.TestCase):
+    def test_trail_never_locks_in_a_net_loss(self):
+        from lvt.engine.exits import breakeven_bid, evaluate_exit
+        from tests.helpers import cfg, snap
+        db = open_state_db(Path(tempfile.mkdtemp()) / "s.db")
+        book = PositionBook(db, "PAPER", "r")
+        p = book.open_pending(sig(), market("X"), T0)
+        book.apply_entry_fill(p, FillEvent("a", T0, 50, 80, fee_usd(80, 50)))
+        c = cfg()
+        be = breakeven_bid(p, market("X"))
+        self.assertGreater(be, 53)                                  # ~1.75c fee each way at 50c
+        book.mark(p, 54, "quadratic", 1.0)                          # +4c gross, below breakeven + activation
+        evaluate_exit(p, snap("X", T0 + 5, 54, 55), None, market("X"), T0 + 5, c.exits)
+        self.assertEqual(p.trail_stop, 0.0)
+        book.mark(p, 58, "quadratic", 1.0)
+        evaluate_exit(p, snap("X", T0 + 6, 58, 59), None, market("X"), T0 + 6, c.exits)
+        self.assertGreaterEqual(p.trail_stop, be)
+        dec, _ = evaluate_exit(p, snap("X", T0 + 7, 55, 56), None, market("X"), T0 + 7, c.exits)
+        self.assertEqual(dec.reason, "TRAILING_PROFIT_TARGET")
+
+
 if __name__ == "__main__":
     unittest.main()

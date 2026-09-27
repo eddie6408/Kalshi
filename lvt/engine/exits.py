@@ -7,6 +7,7 @@ from typing import Optional
 
 from lvt.data.provider import EventContext
 from lvt.engine.positions import Position
+from lvt.fees import fee_usd
 from lvt.engine.volatility import Metrics, side_metrics
 from lvt.models import MarketInfo, Snapshot
 
@@ -14,6 +15,15 @@ EXIT_REASONS = ("EMERGENCY_EXIT", "SETTLEMENT_EXIT", "MAX_LOSS_EXIT", "FIXED_PRO
                 "TRAILING_PROFIT_TARGET", "REVERSAL_EXIT", "MOMENTUM_EXIT", "LIQUIDITY_EXIT",
                 "TIME_EXIT")
 URGENT = ("EMERGENCY_EXIT", "SETTLEMENT_EXIT", "MAX_LOSS_EXIT", "LIQUIDITY_EXIT")
+
+
+def breakeven_bid(p: Position, info: MarketInfo) -> float:
+    """Bid at which selling everything nets zero after both legs' fees."""
+    if p.entry_qty <= 0:
+        return p.avg_entry
+    entry_fee_c = p.entry_fees_usd * 100.0 / p.entry_qty
+    exit_fee_c = fee_usd(max(p.qty, 1), p.avg_entry, info.fee_type, info.fee_multiplier) * 100.0 / max(p.qty, 1)
+    return p.avg_entry + entry_fee_c + exit_fee_c
 
 
 @dataclass
@@ -32,9 +42,13 @@ def evaluate_exit(p: Position, snap: Snapshot, m: Optional[Metrics], info: Marke
     if bid is None:
         return None, "HOLD: no bid on our side - cannot exit into an empty book"
 
-    # trailing stop bookkeeping (peak is maintained by PositionBook.mark)
-    if p.peak_bid - p.avg_entry >= cfg.trail_activation_cents:
-        p.trail_stop = max(p.trail_stop, p.peak_bid - cfg.trail_distance_cents)
+    # Trailing stop (peak is maintained by PositionBook.mark). It activates
+    # only once the peak is trail_activation_cents above the NET breakeven
+    # (entry + entry fee + exit fee per contract), and it never trails below
+    # breakeven - otherwise a "profit lock" can lock in a loss after fees.
+    be = breakeven_bid(p, info)
+    if p.peak_bid - be >= cfg.trail_activation_cents:
+        p.trail_stop = max(p.trail_stop, p.peak_bid - cfg.trail_distance_cents, be)
 
     sm = side_metrics(m, p.side) if m is not None else None
     held = now - p.opened_ts
