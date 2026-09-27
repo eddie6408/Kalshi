@@ -91,6 +91,8 @@ class FeedStats:
     snapshots: int = 0
     deltas: int = 0
     resnapshots: int = 0
+    #: real gaps in a subscription's message sequence (each costs a reconnect)
+    gaps: int = 0
     errors: int = 0
     unparsed: int = 0
     connected_since: datetime | None = None
@@ -101,7 +103,7 @@ class FeedStats:
         state = "connected" if self.connected_since else "disconnected"
         return (f"{state}, {self.connects} connects, {self.messages} messages "
                 f"({self.snapshots} snapshots, {self.deltas} deltas), "
-                f"{self.resnapshots} resnapshots, {self.errors} errors")
+                f"{self.resnapshots} resnapshots, {self.gaps} gaps, {self.errors} errors")
 
 
 def cents_from_dollars(value) -> int | None:
@@ -137,6 +139,9 @@ class KalshiFeed:
         self._wanted: set[str] = set()
         self._sid_seq: dict[int, int] = {}
         self._pending_resnapshot: set[str] = set()
+        #: when each ticker last had a snapshot requested, so a market the
+        #: exchange will not re-snapshot is not asked for on every message
+        self._resnap_at: dict[str, float] = {}
         self._last_rollover = time.monotonic()
         # The store serves a quiet book this feed maintains for as long as
         # the connection is up (MarketState._fresh).
@@ -336,11 +341,12 @@ class KalshiFeed:
         if not ticker:
             self.stats.unparsed += 1
             return
+        if not self._in_order(payload):
+            return
         yes = self._levels(msg, "yes")
         no = self._levels(msg, "no")
-        seq = _int(payload.get("seq"))
-        self.state.apply_snapshot(ticker, yes, no, seq=seq)
-        self._remember_seq(payload, seq)
+        # seq=None: the store must not check it per market - see _in_order.
+        self.state.apply_snapshot(ticker, yes, no, seq=None)
         self._pending_resnapshot.discard(ticker)
         self.stats.snapshots += 1
 
@@ -386,9 +392,9 @@ class KalshiFeed:
             log.debug("FEED  unusable delta: %.200s", msg)
             return
 
-        seq = _int(payload.get("seq"))
-        ok = self.state.apply_delta(ticker, side, price, delta, seq=seq)
-        self._remember_seq(payload, seq)
+        if not self._in_order(payload):
+            return
+        ok = self.state.apply_delta(ticker, side, price, delta, seq=None)
         if ok:
             self.stats.deltas += 1
         else:
@@ -397,15 +403,46 @@ class KalshiFeed:
             # it is the only cure: get a fresh snapshot.
             self._pending_resnapshot.add(ticker)
 
-    def _remember_seq(self, payload: dict, seq: int | None) -> None:
+    def _in_order(self, payload: dict) -> bool:
+        """Is this the next message on its subscription?
+
+        Kalshi numbers messages per SUBSCRIPTION (sid), one counter shared by
+        every market on it - not per market. Checking per market read every
+        update to a neighbouring market as a gap: on 27 September, 920 false
+        gaps and 1,085 resnapshot requests in ten minutes, 0 deltas applied.
+
+        A repeat (seq already seen) is dropped. A real gap may have hidden an
+        update to ANY market on the subscription, so every book is distrusted
+        and the feed reconnects, which re-snapshots everything it follows.
+        """
         sid = _int(payload.get("sid"))
-        if sid is not None and seq is not None:
+        seq = _int(payload.get("seq"))
+        if sid is None or seq is None:
+            return True
+        with self._lock:
+            last = self._sid_seq.get(sid)
+            if last is not None and seq <= last:
+                return False                       # a repeat; already applied
+            gap = last is not None and seq != last + 1
             self._sid_seq[sid] = seq
+        if gap:
+            self.stats.gaps += 1
+            why = f"subscription {sid} jumped from {last} to {seq}"
+            log.warning("FEED  %s - a message was missed; reconnecting for "
+                        "fresh snapshots", why)
+            self.state.invalidate_all(f"sequence gap ({why})")
+            self._drop(f"sequence gap ({why})")
+            return False
+        return True
 
     def _request_resnapshots(self) -> None:
+        now = time.monotonic()
         with self._lock:
-            tickers = sorted(self._pending_resnapshot)
+            tickers = sorted(t for t in self._pending_resnapshot
+                             if now - self._resnap_at.get(t, -1e9) >= 300)
             self._pending_resnapshot.clear()
+            for t in tickers:
+                self._resnap_at[t] = now
         if not tickers:
             return
         self.stats.resnapshots += len(tickers)

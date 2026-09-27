@@ -120,38 +120,83 @@ def test_a_delta_can_empty_a_level():
     assert s.get_depth("T").best_price("yes", "sell") is None
 
 
-def test_a_gap_distrusts_the_book_and_asks_for_a_new_snapshot():
+class _FakeWS:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def test_many_markets_share_one_subscription_counter():
+    """The production case that broke on 27 September: Kalshi numbers
+    messages per subscription, so updates to different markets on one sid
+    interleave. None of this is a gap."""
+    s = MarketState(None)
+    f = feed(s)
+    f._handle(snapshot(ticker="A", seq=1, sid=2))
+    f._handle(snapshot(ticker="B", seq=2, sid=2))
+    f._handle(delta(ticker="B", amount="+10.00", seq=3, sid=2))
+    f._handle(delta(ticker="A", amount="+40.00", seq=4, sid=2))
+    assert f.stats.gaps == 0 and f.stats.deltas == 2
+    assert s.entry("A").trusted and s.entry("B").trusted
+    assert s.get_depth("A").total_size("yes", "sell") == 140
+    assert not f._pending_resnapshot
+
+
+def test_subscriptions_count_independently():
+    s = MarketState(None)
+    f = feed(s)
+    f._handle(snapshot(ticker="A", seq=1, sid=2))
+    f._handle(snapshot(ticker="B", seq=1, sid=3))
+    f._handle(delta(ticker="A", seq=2, sid=2))
+    f._handle(delta(ticker="B", seq=2, sid=3))
+    assert f.stats.gaps == 0 and f.stats.deltas == 2
+
+
+def test_a_repeat_is_ignored_not_applied_twice():
     s = MarketState(None)
     f = feed(s)
     f._handle(snapshot(seq=1))
-    f._handle(delta(seq=7))                 # 2..6 never arrived
-    assert s.entry("T").trusted is False
-    assert "T" in f._pending_resnapshot
-    assert f.stats.deltas == 0
+    f._handle(delta(amount="+40.00", seq=2))
+    f._handle(delta(amount="+40.00", seq=2))        # the same message again
+    assert s.get_depth("T").total_size("yes", "sell") == 140
+    assert f.stats.gaps == 0
 
 
-def test_the_resnapshot_request_is_actually_sent():
+def test_a_real_gap_distrusts_everything_and_reconnects():
     s = MarketState(None)
     f = feed(s)
+    f._handle(snapshot(ticker="A", seq=1, sid=2))
+    f._handle(snapshot(ticker="B", seq=2, sid=2))
+    ws = f.ws = _FakeWS()
+    f._handle(delta(ticker="A", seq=9, sid=2))      # 3..8 never arrived
+    assert f.stats.gaps == 1 and f.stats.deltas == 0
+    assert s.entry("A").trusted is False and s.entry("B").trusted is False
+    assert ws.closed and f.ws is None               # run_forever reconnects
+
+
+def test_after_a_reconnect_fresh_snapshots_restore_trust():
+    s = MarketState(None)
+    f = feed(s)
+    f._handle(snapshot(seq=1, sid=2))
+    f._handle(delta(seq=7, sid=2))
+    f._sid_seq.clear()                              # what _connect does
+    f._handle(snapshot(yes=(("0.6100", "10.00"),), seq=1, sid=5))
+    assert s.entry("T").trusted is True
+    assert s.get_depth("T").best_price("yes", "sell") == 61
+
+
+def test_the_resnapshot_request_is_actually_sent_and_not_repeated():
+    f = feed()
     sent = []
     f._send = lambda payload: sent.append(payload)
-    f._handle(snapshot(seq=1))
-    f._handle(delta(seq=7))
+    f._handle(delta(ticker="UNSEEN", seq=5))
     f._request_resnapshots()
-    assert sent and sent[0]["cmd"] == "subscribe"
-    assert sent[0]["params"]["market_tickers"] == ["T"]
+    f._handle(delta(ticker="UNSEEN", seq=6))
+    f._request_resnapshots()
+    assert len(sent) == 1 and sent[0]["params"]["market_tickers"] == ["UNSEEN"]
     assert f.stats.resnapshots == 1
-
-
-def test_a_new_snapshot_clears_the_pending_request_and_restores_trust():
-    s = MarketState(None)
-    f = feed(s)
-    f._handle(snapshot(seq=1))
-    f._handle(delta(seq=7))
-    f._handle(snapshot(yes=(("0.6100", "10.00"),), seq=8))
-    assert s.entry("T").trusted is True
-    assert "T" not in f._pending_resnapshot
-    assert s.get_depth("T").best_price("yes", "sell") == 61
 
 
 def test_a_delta_for_a_market_we_have_no_snapshot_for_asks_for_one():
@@ -264,7 +309,7 @@ def test_losing_the_feed_distrusts_every_cached_book():
     s = MarketState(None)
     f = feed(s)
     f._handle(snapshot(ticker="A", seq=1))
-    f._handle(snapshot(ticker="B", seq=1))
+    f._handle(snapshot(ticker="B", seq=2))   # one counter per subscription
     f.ws = object()
     f._drop("test")
     assert s.entry("A").trusted is False and s.entry("B").trusted is False
