@@ -705,7 +705,7 @@ feed:
   # 0-1% of book reads served from cache, 88% stale by the time they were
   # needed. Live test before enabling: 18 books snapshotted, 10/10 reads
   # served from cache.
-  enabled: true
+  enabled: false
   # Demo only. The production lockout checks this URL exactly as it checks the
   # REST endpoint: a market-data socket pointed at production is still
   # production.
