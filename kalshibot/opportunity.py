@@ -41,7 +41,6 @@ class DecisionStage(str, Enum):
     MODEL = "MODEL"                 # the estimator declined or the edge was too small
     DATA = "DATA"                   # data-quality gates
     MARKET_SKILL = "MARKET_SKILL"   # the model has not shown it beats the market
-    POLICY = "POLICY"               # deliberate rules: lead-time window, price band
     CALIBRATION = "CALIBRATION"
     LIQUIDITY = "LIQUIDITY"         # depth / spread
     GATE = "GATE"                   # the profitability gate
@@ -346,38 +345,6 @@ class Opportunity:
             "decision_stage": self.decision_stage,
             "rejection_reason": self.rejection_reason,
         }
-
-    @classmethod
-    def stub(cls, *, strategy_type: str, event_id: str, ticker: str,
-             stage: "DecisionStage | str", reason: str, detail: str = "",
-             opportunity_class: OpportunityClass = OpportunityClass.UNCLASSIFIED,
-             probability_yes: float | None = None,
-             touch: dict | None = None, settlement_time: datetime | None = None,
-             model_version: str = "", fee_schedule_version: str = "",
-             evidence: dict | None = None) -> "Opportunity":
-        """A market looked at and turned down before a full trade was priced.
-
-        Package 2 records these too - they are most of what the bot decides.
-        No legs and no size: what is recorded is what was KNOWN at the moment
-        (our probability of YES, the touch on each side) so the outcome can be
-        judged later against that, and nothing more.
-        """
-        stage_value = stage.value if isinstance(stage, DecisionStage) else str(stage)
-        return cls(
-            strategy_type=strategy_type, event_id=event_id, market_tickers=[ticker],
-            legs=[], quantity=0, guaranteed=False,
-            probability_yes=probability_yes if probability_yes is not None else 0.0,
-            opportunity_class=opportunity_class,
-            fair_probability=probability_yes, settlement_time=settlement_time,
-            model_version=model_version, fee_schedule_version=fee_schedule_version,
-            evidence={**(evidence or {}), "touch": dict(touch or {}),
-                      "probability_yes": probability_yes, "stub": True},
-            rationale=detail[:400],
-            decision="REJECTED", decision_stage=stage_value, rejection_reason=reason)
-
-    @property
-    def is_stub(self) -> bool:
-        return bool(self.evidence.get("stub"))
 
     @property
     def n_legs(self) -> int:

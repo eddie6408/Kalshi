@@ -150,8 +150,6 @@ class ArbitrageEngine:
         #: makes this a trading bot rather than an arbitrage scanner.
         self.forecasts: list[ForecastStrategy] = self._build_forecasts(
             fees, settings, journal)
-        for strategy in self.forecasts:
-            strategy.execution_mode = mode.value
         self.bankroll_usd = 0.0
         self.gate = ProfitabilityGate(settings.section("profitability"))
         self.limits = RiskLimits.from_dict(settings.section("limits"))
@@ -374,7 +372,6 @@ class ArbitrageEngine:
             report.forecast_skips.extend(strategy.skips[:5])
             strategy.skips = []
         report.near_misses.sort(key=lambda nm: nm.gap_cents)
-        self._ledger_near_misses(report.near_misses)
         del report.near_misses[10:]
         report.accepted.sort(key=lambda o: o.net_edge, reverse=True)
         if self.mode is TradingMode.DEMO_LIVE and report.accepted:
@@ -537,95 +534,24 @@ class ArbitrageEngine:
             op.decision, op.decision_stage = "REJECTED", "GATE"
             op.rejection_reason = decision.reason.value
         if self.journal:
-            op.journal_row_id = self.journal.log_opportunity(self.mode.value, op, decision)
-        # Package 2: the authoritative record. Written before the risk check
-        # so that a failure to record it is known before anything trades.
-        ledger_ok = self._ledger(op)
+            self.journal.log_opportunity(self.mode.value, op, decision)
 
         if decision.accepted:
             ok, why = self._risk_ok(op)
             if not ok:
                 op.decision, op.decision_stage, op.rejection_reason = (
                     "REJECTED", "RISK", why)
-                self._ledger_decide(op)
                 report.rejections[f"RISK:{why}"] = report.rejections.get(
                     f"RISK:{why}", 0) + 1
                 log.info("ARBITRAGE REJECTED  %s | risk: %s", op.summary(), why)
                 return
-            if not ledger_ok and self._fail_closed():
-                # Research brief section 31: a journal failure opens nothing.
-                # A trade that cannot be recorded cannot be attributed, and
-                # this can only ever prevent a trade, never cause one.
-                op.decision, op.decision_stage, op.rejection_reason = (
-                    "REJECTED", "RISK", "LEDGER_WRITE_FAILED (journal.fail_closed)")
-                report.rejections["RISK:LEDGER_WRITE_FAILED"] = report.rejections.get(
-                    "RISK:LEDGER_WRITE_FAILED", 0) + 1
-                log.error("ARBITRAGE REJECTED  %s | the opportunity journal could "
-                          "not record it - not trading (fail closed)", op.summary())
-                return
             op.decision, op.decision_stage = "ACCEPTED", "RISK"
-            self._ledger_decide(op)
             report.accepted.append(op)
             log.info("ARBITRAGE FOUND\n%s", op.explain())
         else:
             key = decision.reason.value
             report.rejections[key] = report.rejections.get(key, 0) + 1
             log.info("ARBITRAGE REJECTED  %s | %s", op.summary(), decision)
-
-    # ---------------- opportunity ledger (Package 2) ----------------
-    def _fail_closed(self) -> bool:
-        return bool(self.s.get("journal.fail_closed", True))
-
-    def _ledger(self, op) -> bool:
-        """Record the opportunity. True if it is in the ledger. With no
-        journal (tests, offline tools) there is nothing to fail."""
-        if self.journal is None or not hasattr(self.journal, "ledger_record"):
-            return True
-        try:
-            self.journal.ledger_record(op)
-            return True
-        except Exception as exc:  # noqa: BLE001
-            log.error("LEDGER  could not record %s: %s", op.opportunity_id, exc)
-            return False
-
-    def _ledger_decide(self, op) -> None:
-        if self.journal is None or not hasattr(self.journal, "ledger_decide"):
-            return
-        try:
-            self.journal.ledger_decide(op)
-        except Exception as exc:  # noqa: BLE001
-            log.error("LEDGER  could not update %s: %s", op.opportunity_id, exc)
-
-    def _ledger_near_misses(self, near_misses) -> None:
-        """Structures priced but not crossed: the closest N per sweep. Their
-        value is known now - the guaranteed floor minus the cost per set,
-        before fees - so the hypothetical is written at once."""
-        if self.journal is None or not hasattr(self.journal, "ledger_record"):
-            return
-        from .opportunity import Opportunity, OpportunityClass
-        limit = int(self.s.get("journal.near_miss_record_limit", 50) or 50)
-        hour = datetime.now(timezone.utc).strftime("%Y%m%d%H")
-        for nm in near_misses[:limit]:
-            try:
-                stub = Opportunity.stub(
-                    strategy_type=nm.strategy, event_id=nm.event_id,
-                    ticker=",".join(nm.tickers), stage="MODEL",
-                    reason="NO_STRUCTURAL_EDGE",
-                    detail=f"{nm.cost_cents}c for a {nm.floor_cents}c floor "
-                           f"({nm.gap_cents}c away)",
-                    opportunity_class=OpportunityClass.STRUCTURAL_ARB)
-                stub.market_tickers = list(nm.tickers)
-                stub.gross_edge = (nm.floor_cents - nm.cost_cents) / 100.0
-                stub.execution_mode = self.mode.value
-                key = f"nm|{nm.strategy}|{','.join(nm.tickers)}|{hour}"
-                if self.journal.ledger_record(stub, dedupe_key=key):
-                    self.journal.set_outcome(
-                        stub.opportunity_id, None, None,
-                        (nm.floor_cents - nm.cost_cents) / 100.0,
-                        "SIMULATED: near miss - guaranteed floor minus cost for "
-                        "one set at the walked price, before fees")
-            except Exception as exc:  # noqa: BLE001
-                log.debug("could not record near miss %s: %s", nm.describe(), exc)
 
     def _breakers_ok(self) -> tuple[bool, str]:
         """The account-level circuit breakers, checked before every entry.

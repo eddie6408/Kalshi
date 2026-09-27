@@ -600,20 +600,9 @@ def main() -> int:
             from kalshibot.weatherdata import WeatherData
             wd = WeatherData(cache_seconds=1,
                              user_agent=nws_user_agent(settings.section("sources")))
-            # score_pending writes through the shared connection directly,
-            # so it takes the journal's write lock like every other writer.
-            with journal.lock:
-                updated, looked_up = score_pending(
-                    journal.conn, wd._session, tz_by_series,
-                    cli_by_station=cli_by_station)
-            # Package 2: how did every opportunity past its settlement turn out?
-            try:
-                from kalshibot.ledger import resolve_outcomes
-                resolve_outcomes(
-                    journal, series_client, fees,
-                    retention_days=int(settings.get("journal.ledger_retention_days", 90)))
-            except Exception as exc:  # noqa: BLE001
-                log.error("LEDGER  outcome pass failed: %s", exc)
+            updated, looked_up = score_pending(
+                journal.conn, wd._session, tz_by_series,
+                cli_by_station=cli_by_station)
             if updated:
                 log.info("SCORING  filled %d forecast rows from %d "
                          "station-days", updated, looked_up)
