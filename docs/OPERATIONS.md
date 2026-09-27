@@ -31,6 +31,32 @@ Resource isolation: CPUQuota 60 %, MemoryMax 900 MB, Nice 10, idle-priority IO,
 | `KALSHI_PROD_KEY_ID` | empty | LIVE only; never logged or displayed |
 | `KALSHI_PROD_PRIVATE_KEY_PATH` | empty | LIVE only; keep it under `/opt/kalshi/live-volatility/secrets/` (the unit hides `/home`) |
 
+## 0. !!! REVISIT RISK LIMITS BEFORE SHADOW OR LIVE !!!
+Since 2026-09-27 PAPER runs in **research mode** (`risk.enforce_limits_in_paper =
+false`), at the user's request, so the calibration dataset is complete:
+
+* waived in PAPER/BACKTEST: daily loss, per-strategy loss, trades per hour,
+  concurrent positions, total exposure, event exposure, drawdown size-halving;
+  sizing uses the fixed $1,000 starting equity;
+* still enforced everywhere: kill switch, fail-closed, spread, liquidity, fresh
+  data, one position per market, time to close, per-trade size caps;
+* every entry a live limit WOULD have blocked is recorded: `risk_events` rows
+  whose detail starts `NOT ENFORCED`, and `signals.explanation.would_block_live`;
+* `max_daily_loss_usd` / `max_strategy_daily_loss_usd` are **placeholders
+  ($500)** from paper testing.
+
+SHADOW and LIVE always enforce every limit (hard-coded, not configurable).
+Before either: re-set every value in `[risk]`, commit, then
+`lvt review-limits --by NAME`. LIVE is refused until that review exists for the
+exact config (readiness item RISK_LIMITS_REVIEWED); SHADOW starts but raises a
+RISK_LIMITS_REVIEW_NEEDED alert until it does.
+
+Useful query - what live limits would have done to the paper sample:
+```sql
+SELECT check_name, COUNT(*) FROM risk_events
+ WHERE env='PAPER' AND detail LIKE 'NOT ENFORCED%' GROUP BY check_name;
+```
+
 ## 3. PAPER startup
 `TRADING_MODE=PAPER` (or unset) → restart. The first ~75 s are the universe sweep;
 then the hot tier fills and each market needs `signals.min_history_s` (300 s) of
@@ -45,6 +71,7 @@ Shows mode/data/execution/key status, PAPER/SHADOW/LIVE performance (never
 combined), positions, the hot-tier scanner, signals, trades, alerts, readiness.
 
 ## 5. SHADOW startup
+**First revisit the `[risk]` limits (section 0) and run `lvt review-limits --by NAME`.**
 Set `TRADING_MODE=SHADOW`, restart. Same live data; every order goes through
 the LIVE order path (V2 payload built and validated by `encoding.py`, stored in
 `orders.payload`, reconciliation every 60 s) against the simulated venue.
@@ -76,6 +103,8 @@ Full stop: `sudo systemctl stop kalshi-live-volatility`.
 
 ## 8. LIVE activation procedure (human only)
 1. PAPER and SHADOW have run long enough for `lvt readiness` data items.
+   **Revisit every `[risk]` limit (section 0) - they were loosened for paper testing -
+   commit, and run `lvt review-limits --by NAME` (readiness item RISK_LIMITS_REVIEWED).**
 2. `lvt backtest` and `lvt oos --grid ...` on the recorded tape.
 3. Commit any change; run `lvt selftest` on the clean commit (records evidence
    for risk, reconciliation, duplicate orders, partial fills, restart).
@@ -154,6 +183,6 @@ BACKTEST_COMPLETED (≥200 trades) · OUT_OF_SAMPLE_TEST_COMPLETED (≥50 test-s
 trades) · SHADOW_MODE_COMPLETED (≥50 trades, ≥7 days, 0 reconciliation failures)
 · NET_EXPECTANCY_POSITIVE (paper and OOS) · RISK_CONTROLS_VALIDATED ·
 RECONCILIATION_VALIDATED · EXECUTION_TESTED · DUPLICATE_ORDER_PROTECTION_TESTED
-· PARTIAL_FILL_HANDLING_TESTED · RESTART_RECOVERY_TESTED ·
+· PARTIAL_FILL_HANDLING_TESTED · RESTART_RECOVERY_TESTED · RISK_LIMITS_REVIEWED ·
 PRODUCTION_CREDENTIALS_PRESENT · HUMAN_AUTHORIZATION.
 Any FAIL → LIVE MODE UNAVAILABLE.

@@ -15,6 +15,9 @@ moves), not event outcomes. It is a separate application from `kalshi-bot`:
 
 Nothing is imported from, written to, or restarted in the existing bot.
 
+**Before SHADOW or LIVE, revisit the risk limits** - PAPER runs with account
+limits waived for calibration (see docs/OPERATIONS.md section 0).
+
 **Default mode is PAPER:** live Kalshi production market data (public, no key),
 simulated execution. No production key is needed to develop or run it.
 

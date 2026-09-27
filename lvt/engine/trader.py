@@ -97,8 +97,8 @@ class Engine:
         # 3. positions: settlement, marking, exits
         self._manage_positions(now)
 
-        # 4. daily loss limit
-        if self.risk.daily_loss_hit(now):
+        # 4. daily loss limit (waived in paper research mode - see risk.py)
+        if self.risk.limits_enforced and self.risk.daily_loss_hit(now):
             if not self.risk.entries_halted_reason:
                 self.risk.entries_halted_reason = "daily loss limit reached - no new positions today"
                 self.alerter.fire("DAILY_LOSS_LIMIT", f"daily P&L ${self.risk.daily_pnl(now):.2f}", "CRITICAL")
@@ -243,8 +243,10 @@ class Engine:
             return
         dec = self.risk.check_entry(sig, snap, m, info, now, self.om.has_working(sig.ticker),
                                     self.venue.balance_usd() if self.venue.is_real else None)
+        if dec.waived:
+            sig.explanation["would_block_live"] = dec.waived
         for name, ok, detail in dec.checks:
-            if not ok or name == "position_size":
+            if not ok or name == "position_size" or detail.startswith("NOT ENFORCED"):
                 self.db.insert("risk_events", {"ts": now, "run_id": self.run_id, "env": self.env, "ticker": sig.ticker,
                                                "signal_id": sig.id, "check_name": name, "passed": ok, "detail": detail})
         if not dec.ok:
@@ -263,7 +265,7 @@ class Engine:
         up = self.om.submit(req, now)
         self.risk.note_entry(now)
         self.counters["entries"] += 1
-        if self.risk.trades_last_hour(now) >= self.cfg.alerts.max_trades_per_hour_alert:
+        if self.risk.limits_enforced and self.risk.trades_last_hour(now) >= self.cfg.alerts.max_trades_per_hour_alert:
             self.alerter.fire("EXCESSIVE_TRADE_FREQUENCY", f"{self.risk.trades_last_hour(now)} entries in 1h")
         if up.status == "REJECTED":
             self.book.entry_finished(pos, now, f"ENTRY_REJECTED: {up.reason}")
@@ -338,5 +340,7 @@ class Engine:
     def status(self) -> dict:
         return {"open_positions": len(self.book.open_positions()), "working_orders": len(self.om.working),
                 "unknown_orders": len(self.om.unknown), "fail_closed": dict(self.risk.fail_closed),
+                "risk_limits": ("ENFORCED" if self.risk.limits_enforced
+                                else "OFF (paper research mode) - REVISIT BEFORE SHADOW/LIVE"),
                 "kill_switch": self.risk.kill_switch, "entries_halted": self.risk.entries_halted_reason,
                 "emergency": self.emergency_reason, "counters": dict(self.counters)}

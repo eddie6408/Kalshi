@@ -43,9 +43,40 @@ ITEMS = [
     "PAPER_DATA_SUFFICIENT", "BACKTEST_COMPLETED", "OUT_OF_SAMPLE_TEST_COMPLETED",
     "SHADOW_MODE_COMPLETED", "NET_EXPECTANCY_POSITIVE", "RISK_CONTROLS_VALIDATED",
     "RECONCILIATION_VALIDATED", "EXECUTION_TESTED", "DUPLICATE_ORDER_PROTECTION_TESTED",
-    "PARTIAL_FILL_HANDLING_TESTED", "RESTART_RECOVERY_TESTED", "PRODUCTION_CREDENTIALS_PRESENT",
-    "HUMAN_AUTHORIZATION",
+    "PARTIAL_FILL_HANDLING_TESTED", "RESTART_RECOVERY_TESTED", "RISK_LIMITS_REVIEWED",
+    "PRODUCTION_CREDENTIALS_PRESENT", "HUMAN_AUTHORIZATION",
 ]
+
+LIMITS_PHRASE = "LIMITS REVIEWED"
+
+
+def limits_reviewed(cfg: Config, db: Database) -> dict | None:
+    """Human review of the [risk] limits, bound to the exact config: the
+    limits were loosened for paper data collection and must be revisited
+    before SHADOW/LIVE."""
+    return db.one("SELECT * FROM readiness_evidence WHERE item='RISK_LIMITS_REVIEWED' AND passed=1 "
+                  "AND config_hash=? ORDER BY ts DESC LIMIT 1", (cfg.config_hash(),))
+
+
+def review_limits_interactive(cfg: Config, db: Database, by: str) -> int:
+    r = cfg.data["risk"]
+    print("Current [risk] limits (config/default.toml + local.toml):")
+    for k, v in r.items():
+        print(f"  {k:<32} {v}")
+    print("\nThese were loosened for PAPER data collection (daily/strategy loss $500, account limits")
+    print("waived in PAPER). SHADOW and LIVE enforce every value above. Edit the config first if")
+    print("any value is not what you want for real trading, commit, then run this again.")
+    if not sys.stdin.isatty():
+        print("Refusing: the review must be typed by a human at a terminal.")
+        return 1
+    if input(f'Type exactly "{LIMITS_PHRASE}": ').strip() != LIMITS_PHRASE:
+        print("Phrase did not match; nothing recorded.")
+        return 1
+    db.insert("readiness_evidence", {"item": "RISK_LIMITS_REVIEWED", "ts": time.time(),
+                                     "git_commit": git_commit(cfg.root), "config_hash": cfg.config_hash(),
+                                     "passed": 1, "details": {"by": by, "risk": r}})
+    print(f"Recorded for config {cfg.config_hash()}. Any later config change requires a new review.")
+    return 0
 
 
 @dataclass
@@ -118,6 +149,12 @@ def readiness(cfg: Config, db: Database) -> list[Item]:
         out.append(Item(item, ev is not None,
                         f"evidence at {time.strftime('%Y-%m-%d %H:%M', time.gmtime(ev['ts']))} UTC for {commit}"
                         if ev else f"no evidence for commit {commit}; run {how}"))
+
+    rv = limits_reviewed(cfg, db)
+    out.append(Item("RISK_LIMITS_REVIEWED", rv is not None,
+                    f"reviewed at {time.strftime('%Y-%m-%d %H:%M', time.gmtime(rv['ts']))} UTC for config {cfg.config_hash()}"
+                    if rv else "limits were loosened for paper testing - revisit them, then run "
+                               "`lvt review-limits --by NAME`"))
 
     ok, detail = credentials_present(cfg)
     out.append(Item("PRODUCTION_CREDENTIALS_PRESENT", ok, detail))

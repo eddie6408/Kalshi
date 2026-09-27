@@ -10,6 +10,7 @@
   oos [--grid strategies.DIP.min_drop_cents=5,6,8 ...]
   label                   label signal outcomes now
   kill on "reason" | kill off
+  review-limits --by NAME  human review of [risk] limits (required before LIVE)
   authorize-live --by NAME | revoke-live
   live-probe [--order-test]   human-run checks with production credentials
 """
@@ -53,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("kill")
     p.add_argument("state", choices=["on", "off"])
     p.add_argument("reason", nargs="?", default="manual")
+    p = sub.add_parser("review-limits")
+    p.add_argument("--by", required=True)
     p = sub.add_parser("authorize-live")
     p.add_argument("--by", required=True)
     sub.add_parser("revoke-live")
@@ -153,6 +156,10 @@ def main(argv: list[str] | None = None) -> int:
             print("kill switch file removed" + (" - but KILL_SWITCH is still set in the environment"
                                                 if cfg.kill_switch_env else ""))
         return 0
+
+    if a.cmd == "review-limits":
+        from lvt.live_gate import review_limits_interactive
+        return review_limits_interactive(cfg, open_state_db(state_path), a.by)
 
     if a.cmd == "authorize-live":
         from lvt.live_gate import authorize_interactive

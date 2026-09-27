@@ -119,6 +119,16 @@ class LiveRunner:
         self.engine = Engine(cfg, self.env, self.run_id, self.db, self.venue, self.scanner.markets,
                              self.alerter, self.clock)
         self.engine.risk.fail_closed["STARTUP"] = "reconciliation has not completed"
+        if self.mode in ("SHADOW", "LIVE"):
+            from lvt.live_gate import limits_reviewed
+            if limits_reviewed(cfg, self.db) is None:
+                log.warning("RISK LIMITS NOT REVIEWED for this config - they were loosened for paper testing. "
+                            "Revisit [risk] in config/default.toml, then run `lvt review-limits --by NAME`.")
+                self.alerter.fire("RISK_LIMITS_REVIEW_NEEDED",
+                                  f"{self.mode} started with [risk] limits not reviewed since paper testing", "CRITICAL")
+        else:
+            log.info("risk limits: %s", "ENFORCED" if self.engine.risk.limits_enforced
+                     else "account limits OFF (paper research mode) - revisit before SHADOW/LIVE")
         self.db.insert("runs", {"run_id": self.run_id, "env": self.env, "kind": "live-loop", "started_ts": time.time(),
                                 "git_commit": git_commit(cfg.root), "config_hash": cfg.config_hash(),
                                 "strategy_versions": {s.name: s.version for s in self.engine.strategies},

@@ -73,6 +73,8 @@ class TestGate(unittest.TestCase):
                                              "metrics": {"trades": 80, "expectancy_usd": 0.05}})
             for item in list(live_gate.SELFTEST_ITEMS) + ["EXECUTION_TESTED"]:
                 self.db.insert("readiness_evidence", {"item": item, "ts": now, "git_commit": "abc123", "passed": 1})
+            self.db.insert("readiness_evidence", {"item": "RISK_LIMITS_REVIEWED", "ts": now, "git_commit": "abc123",
+                                                  "config_hash": c.config_hash(), "passed": 1})
             ok, items = live_gate.live_allowed(c, self.db)
             self.assertFalse(ok)                                            # no human authorization yet
             self.db.insert("live_authorizations", {"ts": now, "authorized_by": "human", "git_commit": "abc123",

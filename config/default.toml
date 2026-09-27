@@ -178,6 +178,18 @@ exit_slippage_cents = 2.0         # limit below the bid for normal exits
 emergency_slippage_cents = 5.0
 
 [risk]
+# PAPER RESEARCH MODE (2026-09-27, user request): the ACCOUNT-LEVEL limits in
+# this section (daily loss, per-strategy loss, trades/hour, concurrent
+# positions, total/event exposure, drawdown halving) are NOT enforced in PAPER
+# or BACKTEST, so the calibration dataset is complete. Every entry they WOULD
+# have blocked is still recorded (risk_events rows "NOT ENFORCED ...",
+# signals.explanation.would_block_live). SHADOW and LIVE always enforce them;
+# the code ignores this switch there.
+# >>> BEFORE SHADOW/LIVE: REVISIT EVERY LIMIT IN THIS SECTION. <<<
+#     LIVE is blocked (readiness item RISK_LIMITS_REVIEWED) until a human runs
+#     `lvt review-limits --by NAME` for the exact config; SHADOW raises a
+#     RISK_LIMITS_REVIEW_NEEDED alert at startup until then.
+enforce_limits_in_paper = false
 paper_starting_equity = 1000.0
 risk_per_trade_pct = 0.01         # of equity, measured entry->stop + fees
 max_position_contracts = 200
@@ -185,8 +197,8 @@ max_position_cost_usd = 100.0
 max_total_exposure_usd = 400.0
 max_event_exposure_usd = 150.0    # correlated markets share an event
 max_concurrent_positions = 5
-max_daily_loss_usd = 500.0          # raised for PAPER data collection (2026-09-27, user request)
-max_strategy_daily_loss_usd = 500.0 # raised with the daily limit so no strategy stops early
+max_daily_loss_usd = 500.0          # PLACEHOLDER from paper testing - revisit before SHADOW/LIVE
+max_strategy_daily_loss_usd = 500.0 # PLACEHOLDER from paper testing - revisit before SHADOW/LIVE
 max_trades_per_hour = 20
 max_entry_slippage_cents = 2.0    # limit price above the signal ask
 max_spread_cents = 3.0

@@ -170,7 +170,7 @@ async function tick(){
  const kv=[['Mode',e.mode],['Market data',e.data],['Execution',e.execution],['Kalshi',e.kalshi],['Production key',e.production_key],
   ['Production orders',e.production_orders],['Equity ('+(e.mode||'')+')',e.equity!=null?'$'+e.equity:'–'],['Daily P&L',e.daily_pnl!=null?'$'+e.daily_pnl:'–'],
   ['Universe / probe / hot',`${e.universe}/${e.probe}/${e.hot}`],['Open positions',e.open_positions],['Working orders',e.working_orders],
-  ['Req/s · 429s',`${e.req_per_s} · ${e.http_429}`],['Clock skew',e.clock_skew_s+'s'],['Cycle',e.cycle_ms+'ms'],['Kill switch',e.kill_switch?'ON':'off'],
+  ['Req/s · 429s',`${e.req_per_s} · ${e.http_429}`],['Clock skew',e.clock_skew_s+'s'],['Cycle',e.cycle_ms+'ms'],['Kill switch',e.kill_switch?'ON':'off'],['Account risk limits',e.risk_limits||'–'],
   ['Reconcile',(st.reconcile||{}).summary||'–']];
  $('status').innerHTML=kv.map(([k,v])=>`<div><b>${k}</b>${esc(v)}</div>`).join('');
  const fc=e.fail_closed||{};$('fc').textContent=Object.keys(fc).length?'FAIL-CLOSED (no new orders): '+Object.entries(fc).map(([k,v])=>k+': '+v).join(' | '):(e.entries_halted||'');

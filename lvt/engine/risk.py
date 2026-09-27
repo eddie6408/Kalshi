@@ -12,6 +12,16 @@ Sizing (section 36):
                  x 0.5 if equity is off its peak by >= drawdown_halving_pct
     then capped  by contracts, cost, account exposure, event exposure
                  (correlation) and a share of the displayed liquidity.
+
+PAPER research mode (risk.enforce_limits_in_paper = false): the ACCOUNT
+limits - daily loss, per-strategy loss, trade frequency, concurrent
+positions, total and event exposure, drawdown halving - are waived in PAPER
+and BACKTEST, and sizing uses the fixed starting equity so every trade is the
+same unit. Each waived check is still evaluated and returned in
+RiskDecision.waived ("would have blocked under live limits"). SHADOW and LIVE
+always enforce: that is decided here in code, not by config. Data-validity
+checks (kill switch, fail-closed, spread, liquidity, fresh data, one position
+per market, time to close) are never waived.
 """
 from __future__ import annotations
 
@@ -26,6 +36,11 @@ from lvt.engine.volatility import Metrics
 from lvt.models import MarketInfo, Signal, Snapshot
 
 
+ACCOUNT_LIMITS = ("max_daily_loss", "max_strategy_loss", "max_trade_frequency", "max_concurrent_positions",
+                  "max_total_exposure", "max_event_exposure", "drawdown_halving")
+RESEARCH_ENVS = ("PAPER", "BACKTEST")     # the only environments allowed to waive account limits
+
+
 @dataclass
 class RiskDecision:
     ok: bool
@@ -33,6 +48,7 @@ class RiskDecision:
     limit_price: float = 0.0
     reason: str = ""
     checks: list[tuple[str, bool, str]] = field(default_factory=list)
+    waived: list[str] = field(default_factory=list)   # account limits that WOULD have blocked / cut this entry
 
 
 class RiskEngine:
@@ -48,6 +64,7 @@ class RiskEngine:
         self.fail_closed: dict[str, str] = {}   # reason code -> detail
         self.kill_switch = False
         self.entries_halted_reason = ""
+        self.limits_enforced = not (env in RESEARCH_ENVS and not self.r.get("enforce_limits_in_paper", True))
 
     # -- account state -------------------------------------------------------
     def day_start(self, now: float) -> float:
@@ -101,8 +118,13 @@ class RiskEngine:
                     has_open_order: bool, live_balance_usd: float | None = None) -> RiskDecision:
         r = self.r
         checks: list[tuple[str, bool, str]] = []
+        waived: list[str] = []
 
         def chk(name, ok, detail):
+            if not ok and name in ACCOUNT_LIMITS and not self.limits_enforced:
+                waived.append(f"{name}: {detail}")
+                checks.append((name, True, f"NOT ENFORCED (paper research mode) - would block: {detail}"))
+                return True
             checks.append((name, bool(ok), detail))
             return ok
 
@@ -138,7 +160,7 @@ class RiskEngine:
 
         if not all(c[1] for c in checks):
             failed = [c for c in checks if not c[1]]
-            return RiskDecision(False, reason=f"{failed[0][0]}: {failed[0][2]}", checks=checks)
+            return RiskDecision(False, reason=f"{failed[0][0]}: {failed[0][2]}", checks=checks, waived=waived)
 
         # -- sizing ----------------------------------------------------------
         ask = sig.ask or 0.0
@@ -146,7 +168,10 @@ class RiskEngine:
         if limit < ask:
             limit = math.ceil(ask)
         risk_c = float(sig.explanation.get("risk_cents") or 0.0) or max(ask - (sig.stop or 0.0), 1.0)
-        budget_usd = equity * r.risk_per_trade_pct
+        # research mode sizes every trade off the fixed starting equity, so the
+        # trade unit does not drift with paper P&L and results stay comparable
+        size_equity = equity if (self.limits_enforced or live_balance_usd is not None) else r.paper_starting_equity
+        budget_usd = size_equity * r.risk_per_trade_pct
         qty = budget_usd * 100.0 / max(risk_c, 0.5)
         vol = max(m.realized_vol, 1e-6)
         vol_scale = min(1.0, r.target_volatility / vol)
@@ -154,7 +179,10 @@ class RiskEngine:
         qty *= max(min(sig.score / 100.0, 1.0), 0.0)
         dd = (self.peak_equity - equity) / self.peak_equity if self.peak_equity > 0 else 0.0
         if dd >= r.drawdown_halving_pct:
-            qty *= 0.5
+            if self.limits_enforced:
+                qty *= 0.5
+            else:
+                waived.append(f"drawdown_halving: equity {dd:.1%} off peak would halve size")
         caps = {
             "max_position_contracts": r.max_position_contracts,
             "max_position_cost": r.max_position_cost_usd * 100.0 / limit,
@@ -163,14 +191,19 @@ class RiskEngine:
             "depth_participation": r.max_depth_participation * sum(
                 s for p, s in snap.ask_levels(sig.side, self.cfg.discovery.depth_max_age_s) if p <= limit),
         }
+        if not self.limits_enforced:
+            for k in ("max_total_exposure", "max_event_exposure"):
+                if caps[k] < qty:
+                    waived.append(f"{k}: would cap size at {max(caps[k], 0):.0f} contracts")
+                caps.pop(k)
         binding = min(caps, key=caps.get)
         final = int(max(0.0, min(qty, caps[binding])))
         detail = (f"budget ${budget_usd:.2f} / risk {risk_c:.1f}c -> vol x{vol_scale:.2f}, score x{sig.score / 100:.2f}, "
                   f"drawdown {dd:.1%} -> {qty:.1f}; caps {', '.join(f'{k}={v:.0f}' for k, v in caps.items())}")
         if chk("position_size", final >= 1, f"{final} contracts ({detail})"):
-            return RiskDecision(True, qty=final, limit_price=float(limit), reason="ok", checks=checks)
+            return RiskDecision(True, qty=final, limit_price=float(limit), reason="ok", checks=checks, waived=waived)
         return RiskDecision(False, reason=f"size rounds to zero ({'binding ' + binding if caps[binding] < qty else 'budget'})",
-                            checks=checks)
+                            checks=checks, waived=waived)
 
     def record_equity(self, now: float) -> None:
         self.db.insert("status", {"k": "equity_peak_" + self.env, "ts": now,
