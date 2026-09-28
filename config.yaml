@@ -141,6 +141,16 @@ fees:
   maker_rate: 0.0025    # fee = ceil_to_cent(rate * contracts * P)
   assume_taker: true    # be pessimistic: price every trade as a taker
   safety_multiplier: 1.10   # pad fee estimates by 10%
+  # Package 8: Kalshi's published schedule per series (fee_type, multiplier,
+  # scheduled changes), read from demo and cached. Checked 2026-09-28: every
+  # traded series is quadratic x1 (= taker_rate above), and 120 of 122 demo
+  # fills were charged exactly that. An entry on a series whose schedule is
+  # unknown or above x1 is REFUSED; a scheduled change is alerted. It never
+  # lowers a fee below the figures above.
+  schedule:
+    enabled: true
+    enforce: true
+    refresh_hours: 6
 
 # ---------------------------------------------------------------------
 # 6. STRATEGY: WEATHER

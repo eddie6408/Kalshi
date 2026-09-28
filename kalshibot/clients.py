@@ -45,6 +45,13 @@ class MarketDataClient:
         raw = self._c._request("GET", f"/series/{series_ticker}", public_ok=True)
         return (raw or {}).get("series") or {}
 
+    def get_fee_changes(self, series_ticker: str) -> list[dict]:
+        """Package 8: fee changes Kalshi has SCHEDULED for this series (upcoming
+        only; the current schedule is on the series itself)."""
+        raw = self._c._request("GET", "/series/fee_changes",
+                               params={"series_ticker": series_ticker}, public_ok=True)
+        return (raw or {}).get("series_fee_change_arr") or []
+
     def get_events(self, status: str = "open") -> list[dict]:
         return self._c.get_events(status=status)
 

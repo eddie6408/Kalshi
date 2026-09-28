@@ -126,6 +126,9 @@ class ArbitrageEngine:
         self.exec_client = execution_client
         self.fees = fees
         self.journal = journal
+        #: Package 8: Kalshi's published fee schedule (kalshibot/fee_schedule.py),
+        #: set by arb.py. None = config fees only, as before.
+        self.fee_schedule = None
         self.mode = mode
 
         self.discovery = MarketDiscovery(market_client, settings.section("discovery"))
@@ -532,6 +535,17 @@ class ArbitrageEngine:
         op.market_price_source = (
             "production" if str(self.s.get("execution.paper_book_source", "demo")
                                 or "demo").lower() == "live" else "demo")
+        # Package 8: which published fee schedule this was checked against.
+        fee_doubt = None
+        schedule = getattr(self, "fee_schedule", None)
+        if schedule is not None:
+            tickers = [leg.ticker for leg in op.legs]
+            try:
+                op.fee_schedule_version = (f"{self.fees.version}|"
+                                           f"{schedule.version_for(tickers)}")
+                fee_doubt = schedule.check_tickers(tickers)
+            except Exception as exc:  # noqa: BLE001
+                fee_doubt = f"fee schedule check failed: {exc}"
         decision = self.gate.evaluate(op)
         if not decision.accepted:
             op.decision, op.decision_stage = "REJECTED", "GATE"
@@ -551,6 +565,16 @@ class ArbitrageEngine:
                 report.rejections[f"RISK:{why}"] = report.rejections.get(
                     f"RISK:{why}", 0) + 1
                 log.info("ARBITRAGE REJECTED  %s | risk: %s", op.summary(), why)
+                return
+            if fee_doubt:
+                # Research brief section 13: an entry priced with fees we
+                # cannot vouch for is not taken. Only ever prevents a trade.
+                op.decision, op.decision_stage, op.rejection_reason = (
+                    "REJECTED", "GATE", f"FEE_SCHEDULE_UNCERTAIN: {fee_doubt}")
+                self._ledger_decide(op)
+                report.rejections["GATE:FEE_SCHEDULE_UNCERTAIN"] = report.rejections.get(
+                    "GATE:FEE_SCHEDULE_UNCERTAIN", 0) + 1
+                log.warning("ARBITRAGE REJECTED  %s | %s", op.summary(), fee_doubt)
                 return
             if not ledger_ok and self._fail_closed():
                 # Research brief section 31: a journal failure opens nothing.

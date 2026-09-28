@@ -451,6 +451,21 @@ def main() -> int:
     engine = ArbitrageEngine(settings, state, portfolio, execution,
                              fees, journal, mode)
 
+    # ---- package 8: the fee schedule Kalshi publishes ------------------
+    # Read from demo (where the fees are charged) and cached. It refuses an
+    # entry on a series whose fees are unknown or above what the model
+    # assumes; it never makes a fee look cheaper than config.yaml's.
+    sched_cfg = settings.section("fees").get("schedule") or {}
+    if sched_cfg.get("enabled", True):
+        from kalshibot.fee_schedule import TAKER_RATE, FeeSchedule
+        engine.fee_schedule = FeeSchedule(
+            series_client, assumed_multiplier=fees.taker_rate / TAKER_RATE,
+            refresh_hours=float(sched_cfg.get("refresh_hours", 6)),
+            enforce=bool(sched_cfg.get("enforce", True)),
+            alert=lambda series, msg: ALERTS.send(
+                today_key("fees", series), f"Fee change scheduled: {series}", msg,
+                priority="high", tags="warning"))
+
     # ---- the position worker ------------------------------------------
     # It runs CONCURRENTLY with the scan, on a much faster clock, because a
     # position needs looking at far more often than the exchange needs
@@ -509,8 +524,11 @@ def main() -> int:
                 strategy.recorder = recorder
         ms_cfg = MakerShadowConfig.from_dict(settings.section("maker_shadow"))
         if ms_cfg.enabled:
+            from kalshibot.fee_schedule import FeeSchedule
+            from kalshibot.livebooks import LiveBookReader as _Reader
             maker_shadow = MakerShadow(journal, fees, ms_cfg, watch=prod_watch,
-                                       versions=run_versions)
+                                       versions=run_versions,
+                                       fee_schedule=FeeSchedule(_Reader(), enforce=False))
             maker_shadow.load()
             prod_watch.listeners.append(maker_shadow)
         print(f"{D}  production watch: books every {watch_cfg.book_interval_seconds:.0f}s, "
@@ -736,6 +754,8 @@ def main() -> int:
                     log.info("SOURCES  %s", MONITOR.summary())
                     if rec_cfg.enabled:
                         log.info("RECORDER  %s", recorder.summary())
+                    if engine.fee_schedule is not None:
+                        log.info("FEES  %s", engine.fee_schedule.summary())
                     if prod_watch is not None:
                         log.info("PRODWATCH  %s%s", prod_watch.summary(),
                                  f" | maker shadow {maker_shadow.summary()}"

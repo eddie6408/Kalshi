@@ -119,6 +119,14 @@ class LiveBookReader:
     def market(self, ticker: str) -> dict:
         return (self._get(f"/markets/{ticker}").get("market") or {})
 
+    def get_series(self, series_ticker: str) -> dict:
+        """Package 8: a series' published fee schedule on production."""
+        return (self._get(f"/series/{series_ticker}").get("series") or {})
+
+    def get_fee_changes(self, series_ticker: str) -> list[dict]:
+        return (self._get("/series/fee_changes", {"series_ticker": series_ticker})
+                .get("series_fee_change_arr") or [])
+
     def trades(self, ticker: str, min_ts: int | None = None, limit: int = 1000,
                max_pages: int = 5) -> list[dict]:
         """Public trade prints for one market, oldest pages last (as served).

@@ -78,9 +78,12 @@ def _fee_cents(fn, price: int, n: int, rate: float, safety: float) -> float:
     return fn(price, n, rate, safety) * 100.0 / max(1, n)
 
 
-def price_order(q: float, book, side: str, cfg: MakerShadowConfig, fees) -> dict | None:
+def price_order(q: float, book, side: str, cfg: MakerShadowConfig, fees,
+                maker_fee=None) -> dict | None:
     """The C2 3.2 price for a resting buy of `side`, or None if no price
-    leaves the edge. `book` is a production DepthBook."""
+    leaves the edge. `book` is a production DepthBook. `maker_fee(price,
+    contracts) -> usd` is the series' published maker fee (Package 8); without
+    it, config.yaml's maker_rate."""
     bid = book.best_price(side, "sell")
     ask = book.best_price(side, "buy")
     if bid is None or ask is None:
@@ -92,7 +95,11 @@ def price_order(q: float, book, side: str, cfg: MakerShadowConfig, fees) -> dict
     ceiling = min(bid + cfg.improve_cents, ask - 1)
     if ceiling < 1:
         return None
-    mfee = _fee_cents(maker_fee_usd, ceiling, n, fees.maker_rate, fees.safety)
+    def mfee_at(px: int) -> float:
+        if maker_fee is not None:
+            return maker_fee(px, n) * 100.0 / max(1, n)
+        return _fee_cents(maker_fee_usd, px, n, fees.maker_rate, fees.safety)
+    mfee = mfee_at(ceiling)
     price = min(ceiling, math.floor(fair - cfg.min_edge_cents - mfee))
     if price < 1 or price > 99:
         return None
@@ -104,16 +111,16 @@ def price_order(q: float, book, side: str, cfg: MakerShadowConfig, fees) -> dict
                 break
     return {"side": side, "price_cents": int(price), "fair_cents": round(fair, 2),
             "best_bid": bid, "best_ask": ask, "queue_ahead": int(queue),
-            "maker_fee_cents": round(_fee_cents(maker_fee_usd, price, n,
-                                                fees.maker_rate, fees.safety), 3),
+            "maker_fee_cents": round(mfee_at(price), 3),
             "taker_fee_cents": round(_fee_cents(taker_fee_usd, ask, n,
                                                 fees.taker_rate, fees.safety), 3),
             "edge_cents": fair - price}
 
 
-def choose(q: float, book, cfg: MakerShadowConfig, fees) -> dict | None:
+def choose(q: float, book, cfg: MakerShadowConfig, fees, maker_fee=None) -> dict | None:
     """The side with the most edge left at its maker price, if any."""
-    plans = [p for p in (price_order(q, book, s, cfg, fees) for s in ("yes", "no")) if p]
+    plans = [p for p in (price_order(q, book, s, cfg, fees, maker_fee)
+                         for s in ("yes", "no")) if p]
     return max(plans, key=lambda p: p["edge_cents"]) if plans else None
 
 
@@ -157,8 +164,12 @@ class MakerShadow:
     """Listener on ProductionWatch. Writes `maker_shadow` rows; sends nothing."""
 
     def __init__(self, journal, fees, cfg: MakerShadowConfig | None = None,
-                 watch=None, clock=time.time, versions: dict | None = None):
+                 watch=None, clock=time.time, versions: dict | None = None,
+                 fee_schedule=None):
         self.journal = journal
+        #: Package 8: the PRODUCTION fee schedule - the simulated fills are on
+        #: production, so its maker fee is the one that applies.
+        self.fee_schedule = fee_schedule
         self.fees = fees
         self.cfg = cfg or MakerShadowConfig()
         self.watch = watch
@@ -205,7 +216,15 @@ class MakerShadow:
             if latest <= now + 60:
                 return
             expires = min(expires, latest)
-        plan = choose(float(q), quote.book, self.cfg, self.fees)
+        maker_fee = None
+        if self.fee_schedule is not None:
+            try:
+                sf = self.fee_schedule.get(ticker.split("-")[0])
+                if sf.known:
+                    maker_fee = sf.maker_fee_usd
+            except Exception:  # noqa: BLE001
+                maker_fee = None
+        plan = choose(float(q), quote.book, self.cfg, self.fees, maker_fee)
         if plan is None:
             return
         row = {
