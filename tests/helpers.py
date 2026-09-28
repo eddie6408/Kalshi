@@ -18,7 +18,9 @@ T0 = 1_800_000_000.0          # fixed epoch for deterministic tests
 
 
 def cfg(overrides: dict | None = None, env: dict | None = None):
-    base = {"execution": {"touch_miss_probability": 0.0, "latency_jitter_ms": 0.0},
+    base = {"execution": {"touch_miss_probability": 0.0, "latency_jitter_ms": 0.0,
+                          "entry_style": "taker", "exit_style": "taker"},   # maker tests opt in
+            "maker": {"take_profit": False, "trades_feed": False},
             "signals": {"min_history_s": 0},
             "risk": {"enforce_limits_in_paper": True}}     # existing tests exercise enforcement
     if overrides:

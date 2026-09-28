@@ -38,9 +38,9 @@ def fee_usd(count: float, price_cents: float, fee_type: str = "quadratic",
 
 
 def fee_per_contract_cents(price_cents: float, fee_type: str = "quadratic",
-                           multiplier: float = 1.0, count: int = 1) -> float:
+                           multiplier: float = 1.0, count: int = 1, maker: bool = False) -> float:
     """Average fee per contract in cents for an order of `count` contracts.
     Rounding up to the cent is per order, so small orders pay more per
     contract; pass the planned count for an honest estimate."""
     count = max(int(count), 1)
-    return fee_usd(count, price_cents, fee_type, multiplier) * 100.0 / count
+    return fee_usd(count, price_cents, fee_type, multiplier, maker=maker) * 100.0 / count

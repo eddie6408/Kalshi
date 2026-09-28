@@ -116,7 +116,8 @@ class KalshiLiveVenue(Venue):
         self.http = http
         self.markets = markets
         self.working: dict[str, tuple[OrderRequest, str]] = {}    # coid -> (req, exchange id)
-        self.reported: dict[str, int] = {}                         # coid -> fills already reported
+        self.reported: dict[str, set] = {}                         # coid -> fill ids already reported
+        self.reported_count: dict[str, int] = {}                   # coid -> contracts already reported
 
     # ---- account (reconciliation sources) --------------------------------
     def balance_usd(self) -> float | None:
@@ -160,18 +161,29 @@ class KalshiLiveVenue(Venue):
             up = self._final(req, oid, now)
         return up
 
-    def _final(self, req: OrderRequest, oid: str, now: float) -> OrderUpdate:
-        """Build the terminal update from the exchange's own fill records."""
-        rows = self.fills_for(oid) if oid else []
+    def _new_fills(self, req: OrderRequest, oid: str, now: float) -> list[FillEvent]:
+        """Exchange fill records for this order not reported yet (resting maker
+        orders fill a bit at a time)."""
+        seen = self.reported.setdefault(req.client_order_id, set())
         fills = []
-        for f in rows:
+        for f in (self.fills_for(oid) if oid else []):
+            fid = str(f.get("trade_id") or f.get("fill_id") or "")
+            if fid in seen:
+                continue
+            seen.add(fid)
             c = int(fnum(f.get("count_fp", f.get("count"))))
             yp = dollars_to_cents(f.get("yes_price_dollars")) or fnum(f.get("yes_price"))
             px = yp if req.side == YES else 100.0 - yp
             fee = fnum(f.get("fee_cost_dollars", f.get("fee_cost")), 0.0)
-            fills.append(FillEvent(req.client_order_id, now, px, c, fee, str(f.get("trade_id") or f.get("fill_id") or "")))
-        n = sum(f.count for f in fills)
-        status = "FILLED" if n >= req.count else ("PARTIAL" if n > 0 else "NO_FILL")
+            fills.append(FillEvent(req.client_order_id, now, px, c, fee, fid))
+        return fills
+
+    def _final(self, req: OrderRequest, oid: str, now: float) -> OrderUpdate:
+        """Terminal update from the exchange's own fill records."""
+        fills = self._new_fills(req, oid, now)
+        self.reported.pop(req.client_order_id, None)
+        total = sum(f.count for f in fills) + self.reported_count.pop(req.client_order_id, 0)
+        status = "FILLED" if total >= req.count else ("PARTIAL" if total > 0 else "NO_FILL")
         self.working.pop(req.client_order_id, None)
         return OrderUpdate(req.client_order_id, status, now, fills=fills, exchange_order_id=oid)
 
@@ -186,10 +198,16 @@ class KalshiLiveVenue(Venue):
             status, _, _, _ = parse_order(o, req.side)
             if status != "ACKED":
                 out.append(self._final(req, oid, now))
-            elif now - req.created_ts > 15:
-                # IOC should never rest; if it does, cancel and report.
-                self.cancel(coid, now)
-                out.append(self._final(req, oid, now))
+                continue
+            expired = (req.tif == "GTC" and req.expire_ts and now >= req.expire_ts) or \
+                      (req.tif != "GTC" and now - req.created_ts > 15)     # an IOC should never rest
+            if expired:
+                out.append(self.cancel(coid, now))            # cancel reports the final fills itself
+                continue
+            fills = self._new_fills(req, oid, now)             # resting maker order filling in pieces
+            if fills:
+                self.reported_count[coid] = self.reported_count.get(coid, 0) + sum(f.count for f in fills)
+                out.append(OrderUpdate(coid, "PARTIALLY_FILLED", now, fills=fills, exchange_order_id=oid))
         return out
 
     def cancel(self, client_order_id: str, now: float) -> OrderUpdate:
@@ -198,7 +216,10 @@ class KalshiLiveVenue(Venue):
             return OrderUpdate(client_order_id, "REJECTED", now, reason="unknown order")
         req, oid = hit
         self.http.request("DELETE", f"{ORDER_PATH}/{oid}", params={"market_ticker": req.ticker})
-        return OrderUpdate(client_order_id, "CANCELLED", now, exchange_order_id=oid)
+        if client_order_id not in self.working:
+            return OrderUpdate(client_order_id, "CANCELLED", now, exchange_order_id=oid)
+        fin = self._final(req, oid, now)                   # fills that landed before the cancel
+        return OrderUpdate(client_order_id, "CANCELLED", now, fills=fin.fills, exchange_order_id=oid)
 
     def lookup(self, client_order_id: str) -> OrderUpdate | None:
         d = self.http.request("GET", "/portfolio/orders", params={"client_order_id": client_order_id, "limit": 5})

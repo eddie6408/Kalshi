@@ -80,6 +80,9 @@ class LiveRunner:
         self.consecutive_failures = 0
         self.last_quote_ok = time.time()
         self.cycle_ms = 0.0
+        self.trades_since = 0.0
+        self.seen_trades: dict[str, float] = {}
+        self.data_trades = KalshiPublicData(self.http, cfg.discovery.quote_batch_size)
 
     # ------------------------------------------------------------ startup
     def build_venue(self):
@@ -261,8 +264,9 @@ class LiveRunner:
                     mi.status = q.status or mi.status
                     mi.result = q.result
         self._fetch_context(hot, pinned)
+        trades, covers = self._fetch_trades(set(hot) | pinned)
         self._clock_check()
-        e.on_snapshots(snaps, time.time(), tradeable=set(hot))
+        e.on_snapshots(snaps, time.time(), tradeable=set(hot), trades=trades, trade_feed_covers=covers)
         self._periodic(time.time())
 
     def _fetch_depth(self, hot: list[str], pinned: set[str]) -> dict:
@@ -286,6 +290,34 @@ class LiveRunner:
             except Exception as exc:                          # noqa: BLE001
                 log.debug("depth %s failed: %s", t, exc)
         return out
+
+    def _fetch_trades(self, watched: set[str]):
+        """Exchange-wide public trade prints since the last cycle, filtered to
+        the markets we watch. They drive the paper maker queue model and are
+        recorded to the tape so replays can use the same evidence."""
+        mk = self.cfg.data.get("maker", {})
+        if not mk.get("trades_feed", True):
+            return None, None
+        since = self.trades_since or (time.time() - 5)
+        try:
+            got, complete = self.data_trades.trades_since(since - 2, int(mk.get("trades_max_pages", 3)))
+        except Exception as exc:                          # noqa: BLE001
+            log.debug("trade feed failed: %s", exc)
+            return [], set()
+        fresh = []
+        for t in got:
+            if t.trade_id in self.seen_trades:
+                continue
+            self.seen_trades[t.trade_id] = t.ts
+            if t.ticker in watched:
+                fresh.append(t)
+        if got:
+            self.trades_since = max(t.ts for t in got)
+        if len(self.seen_trades) > 50000:
+            cutoff = self.trades_since - 120
+            self.seen_trades = {k: v for k, v in self.seen_trades.items() if v >= cutoff}
+        self.tape.record_trades(fresh)
+        return fresh, (set(watched) if complete else set())
 
     def _fetch_context(self, hot: list[str], pinned: set[str]) -> None:
         if not self.cfg.context.enabled:

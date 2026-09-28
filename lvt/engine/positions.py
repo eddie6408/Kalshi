@@ -81,6 +81,8 @@ class Position:
     # bookkeeping kept in memory only
     _exit_proceeds_cents: float = 0.0
     _entry_cost_cents: float = 0.0
+    _maker_exit_tried: bool = False     # one maker attempt per exit, then taker
+    _tp_next_ts: float = 0.0            # earliest time to (re)place a take-profit
 
     def row(self) -> dict:
         d = asdict(self)

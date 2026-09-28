@@ -73,7 +73,25 @@ EMERGENCY, SETTLEMENT (closing soon, ≥97¢, event final, market not active),
 MAX_LOSS (stop), FIXED_PROFIT_TARGET, TRAILING_PROFIT_TARGET, REVERSAL,
 MOMENTUM, LIQUIDITY, TIME. Stale data never triggers an exit (fail closed).
 
-### Paper fills
+### Execution style (since 2026-09-28: maker by default)
+The first night of paper trading (414 taker trades) showed the round trip cost
+~4.8c/contract (2.1c spread + 2.7c taker fees) against a pre-cost edge of
+-1c. So entries now rest as **post-only maker orders** at the bid (one cent
+inside when the spread is >= 2c) for up to 30 s, cancelled early if the bid
+reaches the stop. Once filled, a post-only **take-profit** rests at the target.
+Stops, emergency, settlement and liquidity exits are always taker IOC;
+discretionary exits (trailing, momentum, reversal, time) try one 10 s maker
+order, then take. `execution.entry_style/exit_style = "taker"` restores the
+old behaviour; the style is part of `strategy_version`, so results never pool.
+
+Paper maker fills (`lvt/execution/maker_model.py`) are queue-aware: we join
+behind the displayed size; only real trade prints at our price (from the
+exchange-wide public trade feed, recorded to the tape) move us up the queue;
+a print through our price or the far side reaching it fills us. No
+cancellation ahead of us is ever assumed. Without trade prints (tape before
+2026-09-28) a conservative volume rule is used.
+
+### Paper fills (taker orders)
 IOC marketable limit orders, filled on the **first snapshot after the
 simulated latency** (never the decision snapshot), walking the depth ladder
 with a participation haircut, a deterministic touch-miss probability, taker

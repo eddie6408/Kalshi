@@ -23,6 +23,8 @@ A detector returns:
 """
 from __future__ import annotations
 
+import math
+
 from typing import Optional
 
 from lvt.engine import scoring
@@ -34,14 +36,30 @@ from lvt.models import MarketInfo, Signal, new_id
 EST_COUNT = 10          # contracts assumed when estimating per-contract fees
 
 
+def maker_entry_price(bid: float, ask: float, improve_if_spread_ge: float) -> float:
+    """Where a post-only buy rests: join the bid, or one cent better when the
+    spread is wide enough - never at or through the ask."""
+    p = math.floor(bid + 1e-9)
+    if ask - bid >= improve_if_spread_ge and p + 1 < ask - 1e-9:
+        p += 1
+    return float(p)
+
+
 def edge_math(entry_ask: float, target_bid: float, stop_bid: float, info: MarketInfo,
-              slippage_buffer: float) -> tuple[float, float, float]:
-    """(expected net cents/contract at target, risk cents/contract at stop, reward:risk)."""
-    fin = fee_per_contract_cents(entry_ask, info.fee_type, info.fee_multiplier, EST_COUNT)
-    fout_t = fee_per_contract_cents(target_bid, info.fee_type, info.fee_multiplier, EST_COUNT)
+              slippage_buffer: float, entry_price: float | None = None, maker_entry: bool = False,
+              maker_exit: bool = False) -> tuple[float, float, float]:
+    """(expected net cents/contract at target, risk cents/contract at stop, reward:risk).
+
+    Taker: buy at the ask, sell at the target bid, taker fee both ways.
+    Maker: buy at `entry_price` (the bid), take profit with a resting sell at
+    the target, maker fees; the stop is always a taker exit. Fill probability
+    and adverse selection are NOT in this number - they are measured."""
+    entry = entry_ask if entry_price is None else entry_price
+    fin = fee_per_contract_cents(entry, info.fee_type, info.fee_multiplier, EST_COUNT, maker=maker_entry)
+    fout_t = fee_per_contract_cents(target_bid, info.fee_type, info.fee_multiplier, EST_COUNT, maker=maker_exit)
     fout_s = fee_per_contract_cents(max(stop_bid, 1.0), info.fee_type, info.fee_multiplier, EST_COUNT)
-    net = target_bid - entry_ask - fin - fout_t - slippage_buffer
-    risk = entry_ask - stop_bid + fin + fout_s + slippage_buffer
+    net = target_bid - entry - fin - fout_t - (0.0 if maker_exit else slippage_buffer)
+    risk = entry - stop_bid + fin + fout_s + slippage_buffer
     rr = net / risk if risk > 0 else 0.0
     return round(net, 3), round(risk, 3), round(rr, 3)
 
@@ -49,8 +67,12 @@ def edge_math(entry_ask: float, target_bid: float, stop_bid: float, info: Market
 class Strategy:
     detector = "abstract"
 
-    def __init__(self, name: str, cfg, version: str, sig_cfg, ecfg, rcfg):
+    def __init__(self, name: str, cfg, version: str, sig_cfg, ecfg, rcfg, execution: dict | None = None):
         self.name = name
+        ex = execution or {}
+        self.maker_entry = ex.get("entry_style", "taker") == "maker"
+        self.maker_exit = bool(ex.get("take_profit", False))
+        self.improve_if_spread_ge = float(ex.get("improve_if_spread_ge", 2.0))
         self.cfg = cfg
         self.side = cfg.side
         self.version = version
@@ -61,6 +83,11 @@ class Strategy:
     def evaluate(self, series: MarketSeries, m: Metrics, state: MarketState,
                  info: MarketInfo, now: float) -> Optional[Signal]:
         raise NotImplementedError
+
+    def _edge(self, bid: float, ask: float, target: float, stop: float, info: MarketInfo):
+        entry = maker_entry_price(bid, ask, self.improve_if_spread_ge) if self.maker_entry else None
+        return edge_math(ask, target, stop, info, self.sig_cfg.slippage_buffer_cents, entry,
+                         self.maker_entry, self.maker_exit)
 
     def _signal(self, now, info, m, state, anchor, **kw) -> Signal:
         return Signal(id=new_id("sig"), ts=now, ticker=info.ticker, event_ticker=info.event_ticker,
@@ -115,7 +142,7 @@ class DipStrategy(Strategy):
         target = min(lo + c.target_retrace_frac * drop, hi - 0.5,
                      cur_ask + c.get("max_target_distance_cents", 99.0))
         stop = lo - max(c.stop_buffer_cents, c.get("stop_vol_mult", 0.0) * m.realized_vol)
-        net, risk, rr = edge_math(cur_ask, target, stop, info, self.sig_cfg.slippage_buffer_cents)
+        net, risk, rr = self._edge(cur_bid, cur_ask, target, stop, info)
 
         failures, passes = [], []
 
@@ -203,7 +230,7 @@ class MomentumStrategy(Strategy):
         proj = min(max(slope * c.target_minutes, c.min_target_cents), c.max_target_cents)
         target = min(cur_bid + proj, 99.0, cur_ask + c.get("max_target_distance_cents", 99.0))
         stop = cur_ask - max(c.stop_cents, c.get("stop_vol_mult", 0.0) * m.realized_vol)
-        net, risk, rr = edge_math(cur_ask, target, stop, info, self.sig_cfg.slippage_buffer_cents)
+        net, risk, rr = self._edge(cur_bid, cur_ask, target, stop, info)
 
         failures, passes = [], []
 
@@ -266,5 +293,9 @@ def build_strategies(cfg) -> list[Strategy]:
         sc = cfg.strategies[name]
         if not sc.enabled:
             continue
-        out.append(cls(name, sc, cfg.strategy_version(name), cfg.signals, cfg.eligibility, cfg.risk))
+        mk = cfg.data.get("maker", {})
+        ex = {"entry_style": cfg.data.get("execution", {}).get("entry_style", "taker"),
+              "take_profit": mk.get("take_profit", False),
+              "improve_if_spread_ge": mk.get("improve_if_spread_ge", 2.0)}
+        out.append(cls(name, sc, cfg.strategy_version(name), cfg.signals, cfg.eligibility, cfg.risk, ex))
     return out

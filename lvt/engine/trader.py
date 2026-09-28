@@ -16,12 +16,12 @@ from typing import Optional
 from lvt.alerts import Alerter
 from lvt.data.provider import EventContext
 from lvt.db import Database
-from lvt.engine.exits import evaluate_exit
+from lvt.engine.exits import URGENT, evaluate_exit
 from lvt.engine.positions import Position, PositionBook
 from lvt.engine.risk import RiskEngine
 from lvt.engine.scanner import eligibility
 from lvt.engine.states import classify
-from lvt.engine.strategies import Strategy, build_strategies
+from lvt.engine.strategies import Strategy, build_strategies, maker_entry_price
 from lvt.engine.volatility import MarketSeries, Metrics, compute_metrics
 from lvt.execution.base import Venue
 from lvt.execution.order_manager import OrderManager
@@ -68,7 +68,10 @@ class Engine:
         self.risk.restore(now)
 
     # ------------------------------------------------------------------ cycle
-    def on_snapshots(self, snaps: dict[str, Snapshot], now: float, tradeable: Optional[set[str]] = None) -> None:
+    def on_snapshots(self, snaps: dict[str, Snapshot], now: float, tradeable: Optional[set[str]] = None,
+                     trades: Optional[list] = None, trade_feed_covers: Optional[set[str]] = None) -> None:
+        if trades is not None:
+            self.venue.on_trades(trades, trade_feed_covers)
         for t, s in snaps.items():
             ser = self.series.get(t)
             if ser is None:
@@ -120,6 +123,7 @@ class Engine:
 
     # ------------------------------------------------------------- positions
     def _manage_positions(self, now: float) -> None:
+        mk = self.cfg.data.get("maker", {})
         for p in self.book.open_positions():
             ser = self.series.get(p.ticker)
             snap = ser.last_snapshot if ser else None
@@ -128,13 +132,27 @@ class Engine:
                 continue
             q = snap.quote
             if q.result in ("yes", "no") and q.status in ("settled", "finalized", "determined") and p.status == "OPEN":
+                w = self.om.working_for(p.ticker)
+                if w is not None:
+                    self.om.cancel(w.client_order_id, now)
                 self.om.record_settlement(p.ticker, p.side, p.qty, q.result, p.id, now)
                 self.book.settle(p, q.result, now)
                 self._log_decision(p, "SETTLED", f"market settled {q.result}", now)
                 continue
             self.book.mark(p, snap.bid(p.side), info.fee_type, info.fee_multiplier)
-            if p.status != "OPEN" or self.om.has_working(p.ticker):
+            w = self.om.working_for(p.ticker)
+            if w is None and self.om.has_working(p.ticker):
+                continue                                   # an UNKNOWN order: fail closed on this market
+            if p.status == "PENDING":
+                # resting maker entry, nothing filled yet: drop it if the thesis died first
+                bid = snap.bid(p.side)
+                if w is not None and w.purpose == "ENTRY" and w.post_only and p.stop and bid is not None and bid <= p.stop:
+                    self._log_decision(p, "CANCEL_ENTRY", f"bid {bid:.1f}c reached the stop {p.stop:.1f}c before the "
+                                                          "maker entry filled", now)
+                    self.om.cancel(w.client_order_id, now)
                 continue
+            if p.status != "OPEN" or (w is not None and w.purpose == "EXIT"):
+                continue                                   # an exit order is already working
             m = self.metrics.get(p.ticker)
             age = now - snap.ts
             if age > self.cfg.eligibility.max_data_age_s and not self.emergency_reason:
@@ -143,29 +161,78 @@ class Engine:
             dec, hold = evaluate_exit(p, snap, m, info, now, self.cfg.exits,
                                       self.contexts.get(p.event_ticker), self.emergency_reason)
             if dec is None:
+                if w is None:
+                    self._place_take_profit(p, snap, now, mk)
                 self._maybe_hold_log(p, hold, now)
                 if now - p.updated_ts > 30:
                     self.book.save(p)              # persist marks for the dashboard
                 continue
-            p.status = "CLOSING"
-            p.exit_reason = dec.reason
-            p.exit_mid = snap.mid(p.side) or dec.bid
-            p.exit_ref_bid = dec.bid
-            self.book.save(p)
-            self._log_decision(p, "EXIT", f"{dec.reason}: {dec.detail}", now,
-                               {"bid": dec.bid, "limit": dec.limit})
+            if w is not None:
+                # a resting entry remainder or take-profit must go before we exit
+                up = self.om.cancel(w.client_order_id, now)
+                if up is None or up.status == "UNKNOWN" or p.status != "OPEN" or p.qty <= 0:
+                    continue
+            self._submit_exit(p, snap, dec, now, mk)
+
+    def _place_take_profit(self, p: Position, snap: Snapshot, now: float, mk: dict) -> None:
+        """Resting post-only sell at the target as soon as we hold contracts."""
+        if (not mk.get("take_profit", False) or self.risk.kill_switch or p.qty <= 0 or not p.target
+                or now < p._tp_next_ts):
+            return
+        price = float(min(99, math.ceil(p.target - 1e-9)))
+        bid = snap.bid(p.side)
+        if bid is not None and price <= bid:
+            return                                         # already there: the exit engine takes it
+        p._tp_next_ts = now + float(mk.get("tp_retry_s", 10))
+        req = OrderRequest(client_order_id=new_id("lvt"), ticker=p.ticker, event_ticker=p.event_ticker,
+                           action="sell", side=p.side, count=p.qty, limit_price=price, purpose="TAKE_PROFIT",
+                           ref_price=price, created_ts=now, position_id=p.id, signal_id=p.signal_id,
+                           exit_reason="FIXED_PROFIT_TARGET", data_ts=snap.ts, signal_ts=now,
+                           strategy=p.strategy, post_only=True, tif="GTC")
+        up = self.om.submit(req, now)
+        if up.status == "REJECTED":
+            log.debug("take-profit for %s rejected: %s", p.ticker, up.reason)
+
+    def _submit_exit(self, p: Position, snap: Snapshot, dec, now: float, mk: dict) -> None:
+        p.status = "CLOSING"
+        p.exit_reason = dec.reason
+        p.exit_mid = snap.mid(p.side) or dec.bid
+        p.exit_ref_bid = dec.bid
+        self.book.save(p)
+        ask = snap.ask(p.side)
+        maker = (self.cfg.data.get("execution", {}).get("exit_style", "taker") == "maker"
+                 and dec.reason not in URGENT and not self.emergency_reason and not p._maker_exit_tried
+                 and ask is not None)
+        if maker:
+            price = float(math.ceil(ask - 1e-9))
+            if ask - dec.bid >= float(mk.get("improve_if_spread_ge", 2.0)) and price - 1 > dec.bid:
+                price -= 1
+            maker = price > dec.bid
+        if maker:
+            p._maker_exit_tried = True
             req = OrderRequest(client_order_id=new_id("lvt"), ticker=p.ticker, event_ticker=p.event_ticker,
-                               action="sell", side=p.side, count=p.qty, limit_price=float(max(1, math.floor(dec.limit))),
+                               action="sell", side=p.side, count=p.qty, limit_price=price, purpose="EXIT",
+                               ref_price=dec.bid, created_ts=now, position_id=p.id, signal_id=p.signal_id,
+                               exit_reason=dec.reason, data_ts=snap.ts, signal_ts=now, strategy=p.strategy,
+                               post_only=True, tif="GTC", expire_ts=now + float(mk.get("exit_ttl_s", 10)))
+            style = f"maker @ {price:.0f}c for {mk.get('exit_ttl_s', 10)}s, then taker"
+        else:
+            req = OrderRequest(client_order_id=new_id("lvt"), ticker=p.ticker, event_ticker=p.event_ticker,
+                               action="sell", side=p.side, count=p.qty,
+                               limit_price=float(max(1, math.floor(dec.limit))),
                                purpose="EXIT", ref_price=dec.bid, created_ts=now, position_id=p.id,
                                signal_id=p.signal_id, exit_reason=dec.reason, data_ts=snap.ts, signal_ts=now,
                                strategy=p.strategy)
-            up = self.om.submit(req, now)
-            self.counters["exits"] += 1
-            if up.status in ("REJECTED", "UNKNOWN"):
-                if up.status == "REJECTED":
-                    p.status = "OPEN"
-                    self.book.save(p)
-                log.warning("exit order for %s %s: %s", p.ticker, up.status, up.reason)
+            style = "taker IOC"
+        self._log_decision(p, "EXIT", f"{dec.reason}: {dec.detail} [{style}]", now,
+                           {"bid": dec.bid, "limit": req.limit_price, "maker": req.post_only})
+        up = self.om.submit(req, now)
+        self.counters["exits"] += 1
+        if up.status in ("REJECTED", "UNKNOWN"):
+            if up.status == "REJECTED":
+                p.status = "OPEN"
+                self.book.save(p)
+            log.warning("exit order for %s %s: %s", p.ticker, up.status, up.reason)
 
     def _maybe_hold_log(self, p: Position, text: str, now: float) -> None:
         if now - self.last_hold_log.get(p.id, 0.0) >= 60:
@@ -255,14 +322,25 @@ class Engine:
             self.counters["rejected"] += 1
             self._record_signal(sig)
             return
+        mk = self.cfg.data.get("maker", {})
+        maker = self.cfg.data.get("execution", {}).get("entry_style", "taker") == "maker"
+        limit, extra = dec.limit_price, {}
+        if maker:
+            bid, ask = snap.bid(sig.side), snap.ask(sig.side)
+            if bid is None or ask is None or bid < 1:
+                sig.decision, sig.reject_reason = "REJECTED", "maker entry: no bid to join"
+                self._record_signal(sig)
+                return
+            limit = maker_entry_price(bid, ask, float(mk.get("improve_if_spread_ge", 2.0)))
+            extra = {"post_only": True, "tif": "GTC", "expire_ts": now + float(mk.get("entry_ttl_s", 30))}
         pos = self.book.open_pending(sig, info, now)
         sig.decision = "TAKEN"
         self._record_signal(sig, pos.id)
         req = OrderRequest(client_order_id=new_id("lvt"), ticker=sig.ticker, event_ticker=sig.event_ticker,
-                           action="buy", side=sig.side, count=dec.qty, limit_price=dec.limit_price,
+                           action="buy", side=sig.side, count=dec.qty, limit_price=limit,
                            purpose="ENTRY", ref_price=sig.ask or 0.0, created_ts=now, position_id=pos.id,
                            signal_id=sig.id, data_ts=sig.data_ts, signal_ts=sig.ts,
-                           event_ts=(ctx.event_ts if ctx else 0.0), strategy=sig.strategy)
+                           event_ts=(ctx.event_ts if ctx else 0.0), strategy=sig.strategy, **extra)
         up = self.om.submit(req, now)
         self.risk.note_entry(now)
         self.counters["entries"] += 1
@@ -298,6 +376,12 @@ class Engine:
             if up.status in TERMINAL_ORDER_STATES:
                 self.book.entry_finished(p, up.ts, f"ENTRY_{up.status}: {up.reason}")
         else:
+            if req.purpose == "TAKE_PROFIT" and up.fills:
+                ser = self.series.get(p.ticker)
+                snap = ser.last_snapshot if ser else None
+                p.exit_reason = "FIXED_PROFIT_TARGET"
+                p.exit_ref_bid = req.limit_price          # we sold at our own resting ask
+                p.exit_mid = (snap.mid(p.side) if snap else None) or req.limit_price
             for f in up.fills:
                 self.book.apply_exit_fill(p, f)
             if up.status in TERMINAL_ORDER_STATES and p.status == "CLOSING":

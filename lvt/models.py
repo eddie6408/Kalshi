@@ -276,7 +276,7 @@ class OrderRequest:
     side: str                         # yes | no
     count: int
     limit_price: float                # side-relative cents
-    purpose: str                      # ENTRY | EXIT
+    purpose: str                      # ENTRY | EXIT | TAKE_PROFIT
     ref_price: float                  # side ask (buy) / bid (sell) at decision time
     created_ts: float
     position_id: str = ""
@@ -286,6 +286,29 @@ class OrderRequest:
     signal_ts: float = 0.0
     event_ts: float = 0.0
     strategy: str = ""
+    # maker orders: post_only never crosses; GTC rests until filled, cancelled
+    # or expire_ts (bot-managed expiry). Taker orders are IOC.
+    post_only: bool = False
+    tif: str = "IOC"                  # IOC | GTC
+    expire_ts: float = 0.0
+
+    @property
+    def is_maker(self) -> bool:
+        return self.post_only
+
+
+@dataclass
+class Trade:
+    """One public trade print. taker_side is the side the TAKER bought."""
+    ticker: str
+    ts: float
+    yes_price: float                  # cents
+    count: float
+    taker_side: str                   # yes | no
+    trade_id: str = ""
+
+    def side_price(self, side: str) -> float:
+        return self.yes_price if side == YES else 100.0 - self.yes_price
 
 
 @dataclass
@@ -302,7 +325,8 @@ class FillEvent:
 class OrderUpdate:
     """What a venue reports back about an order."""
     client_order_id: str
-    status: str                       # ACKED | FILLED | PARTIAL | NO_FILL | REJECTED | CANCELLED | UNKNOWN
+    status: str                       # ACKED | PARTIALLY_FILLED (still working) | FILLED | PARTIAL | NO_FILL
+    #                                   | REJECTED | CANCELLED | UNKNOWN
     ts: float
     fills: list[FillEvent] = field(default_factory=list)
     exchange_order_id: str = ""

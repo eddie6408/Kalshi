@@ -12,7 +12,7 @@ from typing import Iterator
 
 from lvt.data.provider import EventContext
 from lvt.db import Database
-from lvt.models import Depth, MarketInfo, Quote, Snapshot
+from lvt.models import Depth, MarketInfo, Quote, Snapshot, Trade
 
 
 class TapeRecorder:
@@ -58,6 +58,13 @@ class TapeRecorder:
             self.db.executemany("INSERT INTO probe_quotes VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
             self.rows_written += len(rows)
 
+    def record_trades(self, trades: list[Trade]) -> None:
+        if not self.enabled or not trades:
+            return
+        self.db.executemany("INSERT INTO trades VALUES (?,?,?,?,?,?)",
+                            [(t.ts, t.ticker, t.yes_price, t.count, t.taker_side, t.trade_id) for t in trades])
+        self.rows_written += len(trades)
+
     def record_depth(self, d: Depth) -> None:
         if not self.enabled:
             return
@@ -89,7 +96,7 @@ class TapeRecorder:
     def prune(self, retention_days: float) -> int:
         cutoff = time.time() - retention_days * 86400
         n = 0
-        for table in ("quotes", "probe_quotes", "depth", "context"):
+        for table in ("quotes", "probe_quotes", "trades", "depth", "context"):
             n += self.db.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff,)).rowcount
         return n
 
@@ -104,6 +111,15 @@ def load_markets(tape: Database) -> dict[str, MarketInfo]:
             status="active", volume_24h=r["volume_24h"] or 0.0, fee_type=r["fee_type"] or "quadratic",
             fee_multiplier=r["fee_multiplier"] or 1.0)
     return out
+
+
+def load_trades(tape: Database, start: float, end: float) -> list[Trade]:
+    try:
+        rows = tape.conn.execute("SELECT ts, ticker, yes_price, count, taker_side, trade_id FROM trades "
+                                 "WHERE ts>=? AND ts<? ORDER BY ts", (start, end)).fetchall()
+    except Exception:                                  # tape recorded before the trades table existed
+        return []
+    return [Trade(r[1], r[0], r[2], r[3], r[4], r[5]) for r in rows]
 
 
 def iter_snapshots(tape: Database, start: float, end: float, tickers: set[str] | None = None,

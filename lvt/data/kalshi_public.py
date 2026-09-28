@@ -14,7 +14,7 @@ from datetime import datetime
 
 from lvt.data.http import PublicHttp
 from lvt.data.provider import MarketDataProvider
-from lvt.models import Depth, MarketInfo, Quote, dollars_to_cents, fnum
+from lvt.models import Depth, MarketInfo, Quote, Trade, dollars_to_cents, fnum
 
 log = logging.getLogger("lvt.data.kalshi")
 
@@ -53,6 +53,15 @@ def parse_quote(m: dict, ts: float) -> Quote:
         status=str(m.get("status") or ""),
         result=str(m.get("result") or ""),
     )
+
+
+def parse_trade(t: dict) -> Trade:
+    yp = dollars_to_cents(t.get("yes_price_dollars"))
+    if yp is None:
+        yp = fnum(t.get("yes_price"))
+    return Trade(ticker=t.get("ticker", ""), ts=parse_ts(t.get("created_time")), yes_price=yp,
+                 count=fnum(t.get("count_fp", t.get("count"))), taker_side=str(t.get("taker_side") or ""),
+                 trade_id=str(t.get("trade_id") or ""))
 
 
 def parse_market(m: dict) -> MarketInfo:
@@ -148,6 +157,23 @@ class KalshiPublicData(MarketDataProvider):
     def depth(self, ticker: str, levels: int) -> Depth:
         d = self.http.get(f"/markets/{ticker}/orderbook", params={"depth": levels})
         return parse_depth(ticker, d, time.time())
+
+    def trades_since(self, min_ts: float, max_pages: int = 3) -> tuple[list[Trade], bool]:
+        """Exchange-wide public trade prints since min_ts (GET /markets/trades).
+        Returns (trades, complete); complete is False if max_pages ran out."""
+        out: list[Trade] = []
+        params = {"limit": 1000, "min_ts": int(min_ts)}
+        cursor = None
+        for _ in range(max_pages):
+            if cursor:
+                params["cursor"] = cursor
+            d = self.http.get("/markets/trades", params=params)
+            for t in d.get("trades") or []:
+                out.append(parse_trade(t))
+            cursor = d.get("cursor")
+            if not cursor:
+                return out, True
+        return out, False
 
     def market(self, ticker: str) -> dict:
         return self.http.get(f"/markets/{ticker}").get("market") or {}

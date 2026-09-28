@@ -47,3 +47,6 @@ class Venue(abc.ABC):
 
     def balance_usd(self) -> float | None:
         return None
+
+    def on_trades(self, trades, covered=None) -> None:
+        """Public trade prints (used by simulated maker fills). Live ignores them."""

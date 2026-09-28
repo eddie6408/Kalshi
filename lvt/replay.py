@@ -38,7 +38,7 @@ from lvt.labeler import label_signals
 from lvt.models import FillEvent
 from lvt.fees import fee_usd
 from lvt.reports import closed, metrics
-from lvt.tape import iter_snapshots, load_markets
+from lvt.tape import iter_snapshots, load_markets, load_trades
 
 log = logging.getLogger("lvt.replay")
 
@@ -65,10 +65,20 @@ def run_replay(cfg: Config, tape: Database, start: float, end: float, out_dir: P
     t_wall = time.time()
     steps = 0
     last_snaps = {}
+    # Public trade prints recorded by the live loop drive the maker queue
+    # model. Where the tape has none (recorded before the feed existed) the
+    # venue falls back to the conservative volume rule.
+    trades = load_trades(tape, start, end)
+    covered = {tr.ticker for tr in trades}
+    ti = 0
     for t, snaps in iter_snapshots(tape, start, end, step_s=cfg.discovery.quote_interval_s,
                                    keepalive_s=cfg.discovery.quote_interval_s * 3):
         clock.advance_to(t)
-        engine.on_snapshots(snaps, t)
+        batch = []
+        while ti < len(trades) and trades[ti].ts <= t:
+            batch.append(trades[ti])
+            ti += 1
+        engine.on_snapshots(snaps, t, trades=batch, trade_feed_covers=covered)
         last_snaps.update(snaps)
         steps += 1
     # positions still open at the end of the data: mark out at the last bid

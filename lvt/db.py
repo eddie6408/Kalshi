@@ -163,6 +163,11 @@ CREATE TABLE IF NOT EXISTS probe_quotes (
     last REAL, volume REAL, oi REAL, status TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_probe_ticker ON probe_quotes(ticker, ts);
+CREATE TABLE IF NOT EXISTS trades (
+    ts REAL, ticker TEXT, yes_price REAL, count REAL, taker_side TEXT, trade_id TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_trades_ts ON trades(ts);
+CREATE INDEX IF NOT EXISTS ix_trades_ticker ON trades(ticker, ts);
 CREATE TABLE IF NOT EXISTS depth (
     ts REAL, ticker TEXT, yes TEXT, no TEXT
 );

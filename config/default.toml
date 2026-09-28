@@ -218,6 +218,11 @@ drawdown_halving_pct = 0.05       # halve size when equity is this far off peak
 daily_loss_policy = "manage"      # "manage" (exit engine keeps running) | "flatten"
 
 [execution]
+# "maker": post-only limit orders at the bid (no spread, maker fee - 0 on
+# plain quadratic series); "taker": marketable IOC orders at the ask.
+# Stops, emergency, settlement and liquidity exits are ALWAYS taker.
+entry_style = "maker"
+exit_style = "maker"              # discretionary exits: one maker try, then taker
 latency_ms = 250                  # signal -> exchange (added to data age)
 latency_jitter_ms = 150
 depth_participation = 0.5         # share of displayed size we assume we get
@@ -225,6 +230,16 @@ touch_miss_probability = 0.05     # someone beats us to the touch
 reject_if_data_older_than_s = 6.0
 order_ttl_s = 10                  # paper IOC resolves on the first snapshot after arrival
 reconcile_interval_s = 60
+
+[maker]
+entry_ttl_s = 30                  # resting entry is cancelled if not filled by then
+exit_ttl_s = 10                   # maker exit attempt before falling back to taker
+improve_if_spread_ge = 2.0        # post one cent inside the spread when it is this wide
+take_profit = true                # rest a post-only sell at the target once filled
+tp_retry_s = 10
+volume_attribution = 0.5          # fallback queue model when no trade feed exists
+trades_feed = true                # poll the exchange-wide public trade feed every cycle
+trades_max_pages = 3
 
 [kill_switch]
 file = "data/KILL_SWITCH"         # touch it to stop new orders

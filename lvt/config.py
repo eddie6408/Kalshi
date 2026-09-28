@@ -127,6 +127,8 @@ class Config:
         # results must never pool under one version
         ex = self.data.get("execution", {})
         style = {k: ex.get(k) for k in ("entry_style", "exit_style") if k in ex}
+        if ex.get("entry_style") == "maker" or ex.get("exit_style") == "maker":
+            style["maker"] = self.data.get("maker", {})
         blob = json.dumps([self.data["strategies"][name], style], sort_keys=True).encode()
         return hashlib.sha256(blob).hexdigest()[:8]
 

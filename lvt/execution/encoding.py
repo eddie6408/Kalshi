@@ -48,10 +48,12 @@ def encode_order(req: OrderRequest) -> dict:
         "side": book_side,
         "count": f"{int(req.count)}",
         "price": f"{yes_price / 100.0:.4f}",
-        "time_in_force": TIME_IN_FORCE,
+        "time_in_force": "good_till_canceled" if req.tif == "GTC" else TIME_IN_FORCE,
         "self_trade_prevention_type": "taker_at_cross",
         "client_order_id": req.client_order_id,
     }
-    if req.action == "sell" or req.purpose == "EXIT":
+    if req.action == "sell" or req.purpose in ("EXIT", "TAKE_PROFIT"):
         body["reduce_only"] = True
+    if req.post_only:
+        body["post_only"] = True       # maker: rejected instead of crossing the spread
     return body

@@ -133,7 +133,7 @@ version) · `decisions` (EXIT / periodic HOLD / SETTLED) · `risk_events` ·
 `eligibility_log` · `market_states` (transitions) · `alerts` · `health` ·
 `status` · `scanner_state` · `readiness_evidence` · `live_authorizations` ·
 `backtest_runs` · views `v_missed_trades`, `v_rejected_signals`.
-`data/tape.db`: `markets`, `quotes` (on change + 6 s keepalive), `probe_quotes`,
+`data/tape.db`: `markets`, `quotes` (on change + 6 s keepalive), `probe_quotes`, `trades` (public prints for watched markets),
 `depth`, `context`. Tape retention 30 days.
 
 ## 10. Alerts
@@ -145,6 +145,12 @@ UNKNOWN_ORDER_STATE, CLOCK_SKEW, RESOURCE, LIVE_GATE_REFUSED. Stored in
 `alerts`, logged, optionally POSTed to `ALERT_WEBHOOK_URL`; 15-min dedupe.
 
 ## 11. Known limitations
+* **Maker fills are modelled, not observed.** Queue position is estimated from
+  displayed size and public trade prints; hidden orders, cancellations ahead
+  of us and the true matching sequence within a 2 s poll are unknown. Treat
+  paper maker results as an estimate until SHADOW/LIVE fills calibrate it.
+  `post_only`, `good_till_canceled` and resting-order fill reporting on the V2
+  endpoint are unverified against production.
 * **REST polling, not a stream.** The production WebSocket needs a key, so
   prices arrive every ~2 s (plus up to ~1 s CloudFront caching). Moves that
   happen and reverse within a poll are invisible, and paper fills resolve on
