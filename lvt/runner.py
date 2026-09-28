@@ -30,6 +30,8 @@ from lvt.data.context import KalshiLiveDataContext, MlbStatsContext
 from lvt.data.http import PublicHttp
 from lvt.data.kalshi_public import KalshiPublicData
 from lvt.data.provider import CompositeContext, FallbackMarketData
+from lvt.data.events import EventDetector
+from lvt.data.schedule import PollState, companion_tickers, plan_context_polls
 from lvt.db import open_state_db, open_tape_db
 from lvt.engine.scanner import Scanner
 from lvt.engine.trader import Engine
@@ -81,6 +83,12 @@ class LiveRunner:
         self.last_quote_ok = time.time()
         self.cycle_ms = 0.0
         self.trades_since = 0.0
+        self.ctx_state: dict[str, PollState] = {}
+        self.event_detector = EventDetector()
+        self.sport_events_seen = 0
+        self.companions: list[str] = []
+        self.companion_info: dict = {}                 # ticker -> MarketInfo (recorded, never traded)
+        self.event_markets: dict[str, tuple[float, list[str]]] = {}   # event -> (fetched ts, tickers)
         self.seen_trades: dict[str, float] = {}
         self.data_trades = KalshiPublicData(self.http, cfg.discovery.quote_batch_size)
 
@@ -220,6 +228,8 @@ class LiveRunner:
                     self.timers["ctx_index"] = now
                     self.context.refresh_index()
                     self.ctx_fetch.providers[0].index = self.context.providers[0].index
+                    self.ctx_fetch.providers[0].groups = self.context.providers[0].groups
+                    self.ctx_fetch.providers[0].meta = self.context.providers[0].meta
                     if len(self.ctx_fetch.providers) > 1:
                         self.ctx_fetch.providers[1].games = self.context.providers[1].games
                 self._probe()
@@ -236,9 +246,10 @@ class LiveRunner:
             pinned = {p.ticker for p in e.book.open_positions()} | {r.ticker for r in e.om.working.values()}
             hot = self.scanner.select_hot(now, pinned)
         snaps: dict[str, Snapshot] = {}
+        self.companions = self._companions(hot) if hot else []
         if hot:
             try:
-                quotes = self.data.quotes(hot)
+                quotes = self.data.quotes(hot + self.companions)
                 self.last_quote_ok = time.time()
                 if "MARKET_DATA" in e.risk.fail_closed:
                     e.risk.fail_closed.pop("MARKET_DATA")
@@ -252,6 +263,9 @@ class LiveRunner:
                 self.timers["hot_probe"] = now
                 with self.lock:
                     self.scanner.note_probe(quotes)
+            if self.companions:
+                with self.lock:
+                    self.scanner.note_probe({t: q for t, q in quotes.items() if t in self.companion_info})
             depths = self._fetch_depth(hot, pinned)
             for t, q in quotes.items():
                 d = depths.get(t)
@@ -320,33 +334,92 @@ class LiveRunner:
         return fresh, (set(watched) if complete else set())
 
     def _fetch_context(self, hot: list[str], pinned: set[str]) -> None:
-        if not self.cfg.context.enabled:
+        """Live scores for watched events, on the schedule in data/schedule.py
+        (live tennis point-by-point, other live events slower, idle rarely)."""
+        ccfg = self.cfg.context
+        if not ccfg.enabled:
             return
         e = self.engine
-        events = []
+        events: list[str] = []
+        sport_of: dict[str, str] = {}
         for t in list(pinned) + hot:
-            mi = self.scanner.markets.get(t)
-            if mi and mi.sport not in ("NON_SPORT",) and mi.event_ticker not in events:
+            mi = self.scanner.markets.get(t) or self.companion_info.get(t)
+            if mi and mi.sport != "NON_SPORT":
                 events.append(mi.event_ticker)
-        budget = self.cfg.context.max_live_data_requests_per_cycle
+                sport_of[mi.event_ticker] = mi.sport
         now = time.time()
-        for ev in events:
-            if budget <= 0:
-                break
-            if now - self.ctx_last.get(ev, 0) < self.cfg.context.live_data_interval_s:
-                continue
-            if not self.ctx_fetch.covers(ev):
-                continue
-            self.ctx_last[ev] = now
-            budget -= 1
+        for ev in plan_context_polls(events, self.ctx_state, now, ccfg, self.ctx_fetch.covers):
+            st = self.ctx_state.setdefault(ev, PollState(sport=sport_of.get(ev, "")))
+            st.last_ts = now
+            meta = self.ctx_fetch.providers[0].meta.get(ev)
+            if meta:
+                self.tape.record_event_meta(ev, meta, now)
             try:
                 c = self.ctx_fetch.context(ev)
             except Exception as exc:                          # noqa: BLE001
                 log.debug("context %s failed: %s", ev, exc)
+                c = None
+            if c is None:
+                err = self.ctx_fetch.last_error.pop(ev, None)
+                st.failed_until = now + (3600 if err == 404 else 60)
                 continue
-            if c is not None:
-                e.contexts[ev] = c
-                self.tape.record_context(c)
+            st.status = c.status
+            st.sport = c.sport if c.sport != "OTHER" else st.sport
+            e.contexts[ev] = c
+            self.tape.record_context(c)
+            found = self.event_detector.update(c)
+            if found:
+                self.sport_events_seen += len(found)
+                self.tape.record_sport_events(found)
+
+    def _companions(self, hot: list[str]) -> list[str]:
+        """Related markets of live tennis matches on the hot tier: recorded
+        every cycle for research, never traded."""
+        ccfg = self.cfg.context
+        if not ccfg.get("companions_enabled", False):
+            return []
+        sports = set(ccfg.get("companion_sports", ["TENNIS"]))
+        hot_events = []
+        for t in hot:
+            mi = self.scanner.markets.get(t)
+            if mi and mi.sport in sports:
+                hot_events.append(mi.event_ticker)
+        live = {ev: st.status for ev, st in self.ctx_state.items()}
+        groups = self.ctx_fetch.providers[0].groups
+        needed = [rel for ev in dict.fromkeys(hot_events) if live.get(ev) == "live"
+                  for rel in groups.get(ev, (ev,))]
+        self._load_event_markets(needed)
+        by_event = {ev: tk for ev, (_, tk) in self.event_markets.items()}
+        return companion_tickers(hot_events, groups, live, by_event, set(hot), int(ccfg.get("max_companions", 60)))
+
+    def _load_event_markets(self, events: list[str]) -> None:
+        """Open markets per related event: from the universe when present,
+        otherwise one GET /markets?event_ticker per cycle, cached 15 min."""
+        now = time.time()
+        fetched = 0
+        for ev in dict.fromkeys(events):
+            hit = self.event_markets.get(ev)
+            if hit and now - hit[0] < 900:
+                continue
+            known = [t for t, mi in self.scanner.markets.items() if mi.event_ticker == ev]
+            if known:
+                self.event_markets[ev] = (now, known)
+                continue
+            if fetched >= 1:
+                continue
+            fetched += 1
+            try:
+                found = self.data_trades.list_open_markets(event_ticker=ev)
+            except Exception as exc:                          # noqa: BLE001
+                log.debug("markets for %s failed: %s", ev, exc)
+                self.event_markets[ev] = (now, [])
+                continue
+            for mi in found:
+                with self.lock:
+                    self.scanner.enrich(mi)
+                self.companion_info[mi.ticker] = mi
+            self.tape.record_markets(found, now)
+            self.event_markets[ev] = (now, [mi.ticker for mi in found])
 
     def _clock_check(self) -> None:
         skew = self.http.stats.clock_skew_s
@@ -412,7 +485,9 @@ class LiveRunner:
             "equity": round(eq, 2), "daily_pnl": round(e.risk.daily_pnl(now), 2),
             "req_per_s": round(st.req_per_s(), 2), "http_429": st.http_429, "request_errors": st.errors,
             "clock_skew_s": round(st.clock_skew_s, 2), "cycle_ms": round(self.cycle_ms, 1),
-            "tape_rows": self.tape.rows_written, **e.status(),
+            "tape_rows": self.tape.rows_written,
+            "live_score_events": sum(1 for st in self.ctx_state.values() if st.status == "live"),
+            "companions": len(self.companions), "sport_events": self.sport_events_seen, **e.status(),
         }
         self.db.insert("status", {"k": "engine", "ts": now, "v": status}, replace=True)
         rows = e.scanner_json()

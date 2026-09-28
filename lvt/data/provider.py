@@ -128,6 +128,7 @@ class CompositeContext(SportsEventDataProvider):
 
     def __init__(self, providers: list[SportsEventDataProvider]):
         self.providers = providers
+        self.last_error: dict[str, int] = {}
 
     def refresh_index(self) -> None:
         for p in self.providers:
@@ -148,5 +149,11 @@ class CompositeContext(SportsEventDataProvider):
                 if ctx is not None:
                     return ctx
             except Exception as exc:        # noqa: BLE001
-                log.warning("context provider %s failed for %s: %s", p.name, event_ticker, exc)
+                status = getattr(exc, "status", None)
+                self.last_error[event_ticker] = status or 0
+                # 404 = the provider has no live data for this event (futures etc.)
+                (log.debug if status == 404 else log.warning)(
+                    "context provider %s failed for %s: %s", p.name, event_ticker, exc)
         return None
+
+    last_error: dict = {}

@@ -286,7 +286,8 @@ class Engine:
             row["movement_score"] = max(row["movement_score"] or 0, sig.score)
             ctx = self.contexts.get(info.event_ticker)
             if ctx is not None:
-                sig.explanation["event_context"] = {"provider": ctx.provider, **ctx.summary()}
+                sig.explanation["event_context"] = {"provider": ctx.provider,
+                                                    **{k: v for k, v in ctx.summary().items() if k != "raw"}}
             k = (t, strat.name, sig.anchor)
             if sig.action == "WATCH":
                 if k in self.watch_seen:

@@ -168,6 +168,15 @@ CREATE TABLE IF NOT EXISTS trades (
 );
 CREATE INDEX IF NOT EXISTS ix_trades_ts ON trades(ts);
 CREATE INDEX IF NOT EXISTS ix_trades_ticker ON trades(ticker, ts);
+CREATE TABLE IF NOT EXISTS sport_events (
+    ts_received REAL, ts_provider REAL, event_ticker TEXT, sport TEXT, kind TEXT, actor TEXT,
+    detail TEXT, flags TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sport_events ON sport_events(event_ticker, ts_received);
+CREATE TABLE IF NOT EXISTS event_meta (
+    event_ticker TEXT PRIMARY KEY, milestone_id TEXT, type TEXT, title TEXT, details TEXT,
+    grp TEXT, start_date TEXT, first_seen REAL
+);
 CREATE TABLE IF NOT EXISTS depth (
     ts REAL, ticker TEXT, yes TEXT, no TEXT
 );

@@ -72,6 +72,9 @@ def normalize_live_data(event_ticker: str, mtype: str, details: dict, fetched: f
             "game_points": f"{d.get('competitor1_current_round_score', '')}-{d.get('competitor2_current_round_score', '')}",
             "server": d.get("server") or d.get("serving") or "",
             "advantage": d.get("advantage") or "",
+            # the complete provider payload (points, games, sets, serve stats):
+            # the fair-value research needs fields we have not normalised yet
+            "raw": d,
         }
     elif sport == "BASEBALL":
         ctx.score = f"{d.get('away_points', '')}-{d.get('home_points', '')}"
@@ -100,6 +103,8 @@ class KalshiLiveDataContext(SportsEventDataProvider):
     def refresh_index(self) -> None:
         start = (datetime.now(timezone.utc) - timedelta(days=self.lookback_days)).strftime("%Y-%m-%dT00:00:00Z")
         idx: dict[str, tuple[str, str]] = {}
+        groups: dict[str, tuple] = {}
+        meta: dict[str, dict] = {}
         cursor = None
         for _ in range(20):
             params = {"limit": 500, "category": "Sports", "minimum_start_date": start}
@@ -107,17 +112,27 @@ class KalshiLiveDataContext(SportsEventDataProvider):
                 params["cursor"] = cursor
             d = self.http.get("/milestones", params=params)
             for m in d.get("milestones") or []:
-                for ev in (m.get("primary_event_tickers") or []) + (m.get("related_event_tickers") or []):
+                group = tuple(dict.fromkeys((m.get("primary_event_tickers") or []) + (m.get("related_event_tickers") or [])))
+                for ev in group:
                     idx.setdefault(ev, (m["id"], m.get("type") or ""))
+                    groups.setdefault(ev, group)
+                    meta.setdefault(ev, {"milestone_id": m["id"], "type": m.get("type") or "",
+                                         "title": m.get("title") or "", "details": m.get("details") or {},
+                                         "group": list(group), "start_date": m.get("start_date") or ""})
             cursor = d.get("cursor")
             if not cursor:
                 break
         self.index = idx
+        self.groups = groups          # event -> every event ticker of the same match/game
+        self.meta = meta
         self.indexed_ts = time.time()
         log.info("live-data index: %d event tickers", len(idx))
 
     def covers(self, event_ticker: str) -> bool:
         return event_ticker in self.index
+
+    groups: dict = {}
+    meta: dict = {}
 
     def context(self, event_ticker: str) -> Optional[EventContext]:
         hit = self.index.get(event_ticker)

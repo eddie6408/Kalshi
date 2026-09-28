@@ -19,8 +19,8 @@ base_url = "https://api.elections.kalshi.com/trade-api/v2"
 # Public market data is unauthenticated. The production key is only ever
 # loaded in LIVE mode (see lvt/live_gate.py).
 request_timeout_s = 10
-max_requests_per_second = 6.0     # shared budget for ALL public calls
-burst = 6
+max_requests_per_second = 8.0     # shared budget for ALL public calls (Kalshi basic tier: 20 reads/s)
+burst = 8
 backoff_on_429_s = 5.0
 max_clock_skew_s = 5.0            # vs the HTTP Date header; worse -> fail closed
 
@@ -46,8 +46,13 @@ depth_max_age_s = 6.0             # older depth is ignored by the fill model
 [context]
 enabled = true
 milestone_refresh_interval_s = 600
-live_data_interval_s = 15         # per hot event
-max_live_data_requests_per_cycle = 1
+live_data_interval_s = 15         # other live events
+tennis_live_interval_s = 4        # live tennis: point-by-point for the fair-value research
+idle_interval_s = 120             # scheduled / unknown events
+max_live_data_requests_per_cycle = 4
+companions_enabled = true         # record every market of a live tennis match (never traded)
+companion_sports = ["TENNIS"]
+max_companions = 60
 mlb_statsapi_enabled = true
 
 [volatility]

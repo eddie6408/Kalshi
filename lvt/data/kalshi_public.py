@@ -126,10 +126,13 @@ class KalshiPublicData(MarketDataProvider):
             }
         return out
 
-    def list_open_markets(self, pause_s: float = 0.0, series_ticker: str | None = None) -> list[MarketInfo]:
+    def list_open_markets(self, pause_s: float = 0.0, series_ticker: str | None = None,
+                          event_ticker: str | None = None) -> list[MarketInfo]:
         params = {"status": "open", "limit": 1000, "mve_filter": "exclude"}
         if series_ticker:
             params["series_ticker"] = series_ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
         out: list[MarketInfo] = []
         cursor = None
         for _ in range(400):

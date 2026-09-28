@@ -22,6 +22,7 @@ class TapeRecorder:
         self.last_depth: dict[str, tuple] = {}
         self.last_ctx: dict[str, str] = {}
         self.last_probe: dict[str, tuple] = {}
+        self.meta_seen: set[str] = set()
         self.rows_written = 0
         self.enabled = True
 
@@ -64,6 +65,22 @@ class TapeRecorder:
         self.db.executemany("INSERT INTO trades VALUES (?,?,?,?,?,?)",
                             [(t.ts, t.ticker, t.yes_price, t.count, t.taker_side, t.trade_id) for t in trades])
         self.rows_written += len(trades)
+
+    def record_sport_events(self, events) -> None:
+        if events:
+            self.db.executemany("INSERT INTO sport_events VALUES (?,?,?,?,?,?,?,?)", [e.row() for e in events])
+            self.rows_written += len(events)
+
+    def record_event_meta(self, event_ticker: str, meta: dict, now: float) -> None:
+        """Match metadata (competitors, best-of, tour, round, related events),
+        written once per event."""
+        if event_ticker in self.meta_seen:
+            return
+        self.meta_seen.add(event_ticker)
+        self.db.execute("INSERT OR IGNORE INTO event_meta VALUES (?,?,?,?,?,?,?,?)",
+                        (event_ticker, meta.get("milestone_id"), meta.get("type"), meta.get("title"),
+                         json.dumps(meta.get("details") or {}), json.dumps(meta.get("group") or []),
+                         meta.get("start_date"), now))
 
     def record_depth(self, d: Depth) -> None:
         if not self.enabled:
