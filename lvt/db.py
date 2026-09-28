@@ -135,6 +135,32 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
     db_path TEXT, notes TEXT
 );
 
+-- edge engine (EDGE_ENGINE_V1)
+CREATE TABLE IF NOT EXISTS reference_values (
+    ts REAL, env TEXT, ticker TEXT, kind TEXT, reference REAL, ref_lo REAL, ref_hi REAL, confidence REAL,
+    market_mid REAL, dislocation REAL, strength_d REAL, samples INTEGER, state TEXT, mapping TEXT, context_age_s REAL
+);
+CREATE INDEX IF NOT EXISTS ix_refvals ON reference_values(ticker, ts);
+CREATE TABLE IF NOT EXISTS event_responses (
+    id TEXT PRIMARY KEY, ts REAL, match_event TEXT, ticker TEXT, kinds TEXT, tags TEXT, severity TEXT,
+    expected_impact REAL, ref_before REAL, ref_after REAL, mid_at_event REAL, flags TEXT,
+    state_before TEXT, state_after TEXT, env TEXT,
+    actual_10s REAL, actual_30s REAL, actual_60s REAL, actual_180s REAL, response TEXT, labeled_ts REAL
+);
+CREATE INDEX IF NOT EXISTS ix_evresp ON event_responses(ticker, ts);
+CREATE TABLE IF NOT EXISTS trade_diagnostics (
+    position_id TEXT PRIMARY KEY, env TEXT, strategy TEXT, outcome TEXT, category TEXT, detail TEXT, ts REAL
+);
+CREATE TABLE IF NOT EXISTS counterfactuals (
+    signal_id TEXT, horizon_s INTEGER, label TEXT, hyp_pnl_cents REAL, time_to_target_s REAL,
+    time_to_stop_s REAL, max_favorable REAL, max_adverse REAL, ts REAL,
+    PRIMARY KEY (signal_id, horizon_s)
+);
+CREATE TABLE IF NOT EXISTS strategy_experiments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, name TEXT, baseline_env TEXT, challenger_env TEXT,
+    window_start REAL, window_end REAL, result TEXT
+);
+
 CREATE VIEW IF NOT EXISTS v_missed_trades AS
     SELECT o.*, s.strategy AS signal_strategy, s.score AS signal_score
     FROM orders o LEFT JOIN signals s ON s.id = o.signal_id
@@ -142,6 +168,9 @@ CREATE VIEW IF NOT EXISTS v_missed_trades AS
 
 CREATE VIEW IF NOT EXISTS v_rejected_signals AS
     SELECT * FROM signals WHERE decision = 'REJECTED';
+
+CREATE VIEW IF NOT EXISTS v_rejected_opportunities AS
+    SELECT * FROM signals WHERE decision IN ('REJECTED', 'WATCH', 'NO_EDGE');
 """
 
 TAPE_SCHEMA = """

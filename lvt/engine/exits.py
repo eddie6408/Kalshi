@@ -14,7 +14,7 @@ from lvt.models import MarketInfo, Snapshot
 EXIT_REASONS = ("EMERGENCY_EXIT", "SETTLEMENT_EXIT", "MAX_LOSS_EXIT", "FIXED_PROFIT_TARGET",
                 "TRAILING_PROFIT_TARGET", "REVERSAL_EXIT", "MOMENTUM_EXIT", "LIQUIDITY_EXIT",
                 "TIME_EXIT")
-URGENT = ("EMERGENCY_EXIT", "SETTLEMENT_EXIT", "MAX_LOSS_EXIT", "LIQUIDITY_EXIT")
+URGENT = ("EMERGENCY_EXIT", "SETTLEMENT_EXIT", "MAX_LOSS_EXIT", "LIQUIDITY_EXIT", "THESIS_INVALIDATED")
 
 
 def breakeven_bid(p: Position, info: MarketInfo) -> float:
@@ -36,7 +36,7 @@ class ExitDecision:
 
 def evaluate_exit(p: Position, snap: Snapshot, m: Optional[Metrics], info: MarketInfo,
                   now: float, cfg, ctx: Optional[EventContext] = None,
-                  emergency: str = "") -> tuple[Optional[ExitDecision], str]:
+                  emergency: str = "", skip: tuple = ()) -> tuple[Optional[ExitDecision], str]:
     """Returns (decision or None, hold explanation)."""
     bid = snap.bid(p.side)
     if bid is None:
@@ -72,10 +72,11 @@ def evaluate_exit(p: Position, snap: Snapshot, m: Optional[Metrics], info: Marke
     elif p.trail_stop and bid <= p.trail_stop:
         reason, detail = "TRAILING_PROFIT_TARGET", (f"bid {bid:.1f}c fell to trail {p.trail_stop:.1f}c "
                                                     f"(peak {p.peak_bid:.1f}c)")
-    elif sm is not None and sm["velocity_short"] <= -cfg.reversal_exit_velocity and sm["velocity_medium"] < 0:
+    elif ("REVERSAL_EXIT" not in skip and sm is not None and sm["velocity_short"] <= -cfg.reversal_exit_velocity
+          and sm["velocity_medium"] < 0):
         reason, detail = "REVERSAL_EXIT", (f"price reversing against us: short {sm['velocity_short']:+.2f}, "
                                            f"medium {sm['velocity_medium']:+.2f}c/min")
-    elif (sm is not None and p.strategy in ("MOMENTUM", "DOWNTREND")
+    elif ("MOMENTUM_EXIT" not in skip and sm is not None and p.strategy in ("MOMENTUM", "DOWNTREND")
           and sm["velocity_short"] <= -cfg.momentum_exit_velocity):
         reason, detail = "MOMENTUM_EXIT", f"momentum gone: short slope {sm['velocity_short']:+.2f}c/min"
     elif cfg.liquidity_exit_enabled and (spread is None or spread >= cfg.liquidity_exit_spread_cents):

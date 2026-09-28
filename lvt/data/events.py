@@ -61,7 +61,9 @@ def tennis_state(raw: dict) -> dict:
     s2 = (raw.get("competitor2_statistics") or {})
     games1 = sum(_i(r.get("score")) for r in raw.get("competitor1_round_scores") or [])
     games2 = sum(_i(r.get("score")) for r in raw.get("competitor2_round_scores") or [])
+    srv = raw.get("server")
     return {
+        "server_idx": 0 if srv and srv == raw.get("competitor1_id") else 1 if srv and srv == raw.get("competitor2_id") else None,
         "status": str(raw.get("match_status") or ""),
         "sets": (_i(raw.get("competitor1_overall_score")), _i(raw.get("competitor2_overall_score"))),
         "games": (games1, games2),
@@ -124,6 +126,8 @@ class EventDetector:
             if dgames > 0:
                 kind = ("HOLD" if dhold > 0 and dbreak <= 0 else
                         "BREAK" if dbreak > 0 and dhold <= 0 else "GAME")    # GAME = stats can't tell
+                if kind == "GAME" and dgames == 1 and a.get("server_idx") is not None:
+                    kind = "HOLD" if a["server_idx"] == k else "BREAK"      # who served the game that just ended
                 e = ev("GAME_WON", actor, game_type=kind, count=dgames, holds=dhold, breaks=dbreak)
                 if dgames > 1:
                     e.flags.append("MULTI")

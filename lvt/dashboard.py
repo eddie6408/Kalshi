@@ -58,7 +58,7 @@ class Api:
 
     def performance(self):
         eq = self.cfg.risk.paper_starting_equity
-        return {env: full_report(self.db, env, eq) for env in ("PAPER", "SHADOW", "LIVE")}
+        return {env: full_report(self.db, env, eq) for env in ("PAPER", "PAPER_EDGE", "SHADOW", "LIVE")}
 
     def signals(self):
         return self.db.query("SELECT ts, ticker, strategy, side, action, decision, reject_reason, score, ask, target, "
@@ -171,7 +171,8 @@ async function tick(){
   ['Production orders',e.production_orders],['Equity ('+(e.mode||'')+')',e.equity!=null?'$'+e.equity:'–'],['Daily P&L',e.daily_pnl!=null?'$'+e.daily_pnl:'–'],
   ['Universe / probe / hot',`${e.universe}/${e.probe}/${e.hot}`],['Open positions',e.open_positions],['Working orders',e.working_orders],
   ['Req/s · 429s',`${e.req_per_s} · ${e.http_429}`],['Clock skew',e.clock_skew_s+'s'],['Cycle',e.cycle_ms+'ms'],['Kill switch',e.kill_switch?'ON':'off'],['Account risk limits',e.risk_limits||'–'],
-  ['Reconcile',(st.reconcile||{}).summary||'–']];
+  ['Reconcile',(st.reconcile||{}).summary||'–'],
+  ['A/B challenger',e.edge_engine?(e.edge_engine.version+' · '+e.edge_engine.live_matches+' live matches · '+e.edge_engine.open_positions+' open'):'off']];
  $('status').innerHTML=kv.map(([k,v])=>`<div><b>${k}</b>${esc(v)}</div>`).join('');
  const fc=e.fail_closed||{};$('fc').textContent=Object.keys(fc).length?'FAIL-CLOSED (no new orders): '+Object.entries(fc).map(([k,v])=>k+': '+v).join(' | '):(e.entries_halted||'');
  const pf=await j('/api/performance');
@@ -182,7 +183,10 @@ async function tick(){
  $('scanner').innerHTML=table(await j('/api/scanner'),[['Sport',r=>r.sport],['Event',r=>esc(r.event)],['Market',r=>esc(r.sub_title||r.ticker)],['Bid',r=>f(r.bid)],['Ask',r=>f(r.ask)],
   ['Spread',r=>f(r.spread)],['Vol (15m)',r=>f(r.volume,0)],['Liq $',r=>f(r.liquidity,0)],['Volat.',r=>f(r.volatility,2)],['High',r=>f(r.recent_high)],['Low',r=>f(r.recent_low)],
   ['Veloc.',r=>f(r.velocity,2)],['Accel.',r=>f(r.acceleration,2)],['State',r=>r.state],['Move',r=>f(r.movement_score,0)],['Dip',r=>f(r.dip_score,0)],
-  ['Mom.',r=>f(r.momentum_score,0)],['Position',r=>r.position||''],['Action',r=>r.action||(r.eligible?'':'<span class="mut">'+esc((r.elig_reasons||[])[0]||'')+'</span>')]]);
+  ['Mom.',r=>f(r.momentum_score,0)],['Ref',r=>r.reference!=null?f(r.reference)+'<br><span class="mut">'+f((r.ref_range||[])[0])+'-'+f((r.ref_range||[])[1])+'</span>':'<span class="mut">'+esc((r.ref_status||'').slice(0,22))+'</span>'],
+  ['Disl.',r=>f(r.dislocation)],['Conf',r=>r.edge_confidence!=null?Math.round(r.edge_confidence*100)+'%':'–'],
+  ['Event',r=>esc(r.event||'')+(r.event_impact?' <span class="mut">'+r.event_impact+'</span>':'')],['Flow',r=>esc((r.order_flow||'').slice(0,30))],
+  ['Position',r=>r.position||''],['Action',r=>r.action||(r.eligible?'':'<span class="mut">'+esc((r.elig_reasons||[])[0]||'')+'</span>')]]);
  $('signals').innerHTML=table(await j('/api/signals'),[['Age',r=>ago(r.ts)],['Market',r=>esc(r.ticker)],['Strategy',r=>r.strategy],['Action',r=>r.action],
   ['Decision',r=>r.decision+(r.reject_reason?' <span class="mut">'+esc(r.reject_reason).slice(0,40)+'</span>':'')],['Score',r=>f(r.score,0)],['Ask',r=>f(r.ask)],['Tgt',r=>f(r.target)],['Stop',r=>f(r.stop)],['Net c',r=>f(r.expected_net_cents)]]);
  $('trades').innerHTML=table(await j('/api/trades'),[['Market',r=>esc(r.ticker)],['Env',r=>r.env],['Strat',r=>r.strategy],['Qty',r=>r.entry_qty],['In',r=>f(r.avg_entry)],['Out',r=>f(r.avg_exit)],

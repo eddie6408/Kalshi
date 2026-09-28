@@ -91,6 +91,15 @@ a print through our price or the far side reaching it fills us. No
 cancellation ahead of us is ever assumed. Without trade prints (tape before
 2026-09-28) a conservative volume rule is used.
 
+### EDGE_ENGINE_V1 (A/B challenger, since 2026-09-28)
+Trades the gap between the market's move and the move the live score
+justifies, using a deterministic tennis Markov model (`lvt/edge/`). It runs
+in its own paper account (`PAPER_EDGE`) on the same live data as the
+unchanged baseline (`PAPER`); `lvt ab` compares them with confidence
+intervals. Trade types: DISLOCATION_REVERSAL, UNFINISHED_MOMENTUM,
+FLOW_REVERSAL; everything else is EVENT_REPRICING / NO_EDGE (recorded, with
+counterfactual P&L kept separate). Plan and status: docs/specs/edge-engine-plan.md.
+
 ### Paper fills (taker orders)
 IOC marketable limit orders, filled on the **first snapshot after the
 simulated latency** (never the decision snapshot), walking the depth ladder

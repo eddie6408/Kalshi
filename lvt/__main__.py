@@ -6,7 +6,8 @@
   analyze [--env PAPER]   research answers (section 67)
   readiness               production-readiness checklist
   selftest                run the safety test groups and record readiness evidence
-  backtest [--start ISO] [--end ISO]
+  backtest [--start ISO] [--end ISO] [--edge]
+  ab [--record]           BASELINE_V1 (PAPER) vs EDGE_ENGINE_V1 (PAPER_EDGE) with confidence intervals
   oos [--grid strategies.DIP.min_drop_cents=5,6,8 ...]
   label                   label signal outcomes now
   kill on "reason" | kill off
@@ -40,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status")
     for name in ("report", "analyze"):
         p = sub.add_parser(name)
-        p.add_argument("--env", default="PAPER", choices=["PAPER", "SHADOW", "LIVE", "BACKTEST"])
+        p.add_argument("--env", default="PAPER", choices=["PAPER", "PAPER_EDGE", "SHADOW", "LIVE", "BACKTEST"])
         p.add_argument("--db", default="", help="backtest database (with --env BACKTEST)")
         p.add_argument("--json", action="store_true")
     sub.add_parser("readiness")
@@ -48,6 +49,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("backtest")
     p.add_argument("--start")
     p.add_argument("--end")
+    p.add_argument("--edge", action="store_true", help="replay EDGE_ENGINE_V1 instead of the baseline")
+    p = sub.add_parser("ab")
+    p.add_argument("--record", action="store_true")
+    p.add_argument("--json", action="store_true")
     p = sub.add_parser("oos")
     p.add_argument("--grid", nargs="*", default=[])
     sub.add_parser("label")
@@ -129,13 +134,26 @@ def main(argv: list[str] | None = None) -> int:
         out = cfg.path(cfg.app.data_dir) / "backtests"
         if a.cmd == "backtest":
             lo, hi = data_range(tape)
-            s = run_replay(cfg, tape, _ts(a.start, lo), _ts(a.end, hi + 1), out, "backtest", "all", db)
-            print("BACKTEST (replayed live-recorded data, simulated execution)")
+            s = run_replay(cfg, tape, _ts(a.start, lo), _ts(a.end, hi + 1), out, "backtest", "all", db, edge=a.edge)
+            print(f"BACKTEST {'EDGE_ENGINE_V1' if a.edge else 'BASELINE_V1'} (replayed live-recorded data, simulated execution)")
             print(json.dumps(s["metrics"], indent=1))
             print("trades database:", s["db_path"])
         else:
             res = run_oos(cfg.root, tape, db, out, a.grid)
             print(json.dumps(res, indent=1, default=str))
+        return 0
+
+    if a.cmd == "ab":
+        from lvt.edge.ab import ab_report, format_ab
+        db = open_state_db(state_path)
+        rep = ab_report(db, "PAPER", cfg.data.get("edge", {}).get("env", "PAPER_EDGE"))
+        print(json.dumps(rep, indent=1, default=str) if a.json else format_ab(rep))
+        if a.record and rep.get("window"):
+            db.insert("strategy_experiments", {"ts": time.time(), "name": "BASELINE_V1 vs EDGE_ENGINE_V1",
+                                               "baseline_env": "PAPER", "challenger_env": "PAPER_EDGE",
+                                               "window_start": rep["window"][0], "window_end": rep["window"][1],
+                                               "result": rep})
+            print("recorded in strategy_experiments")
         return 0
 
     if a.cmd == "label":

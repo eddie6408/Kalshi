@@ -246,6 +246,53 @@ volume_attribution = 0.5          # fallback queue model when no trade feed exis
 trades_feed = true                # poll the exchange-wide public trade feed every cycle
 trades_max_pages = 3
 
+[edge]
+# EDGE_ENGINE_V1: event-aware dislocation trading (docs/specs/edge-engine-plan.md).
+# Runs in PAPER as a challenger to the unchanged baseline (BASELINE_V1 =
+# the DIP/REVERSAL/MOMENTUM/DOWNTREND strategies) in its own paper account
+# (env PAPER_EDGE) on the same live data. Tennis only for now; any market
+# without a model gets NO reference and therefore NO_EDGE.
+enabled = true
+version = "EDGE_ENGINE_V1"
+env = "PAPER_EDGE"
+base_serve = { ATP = 0.64, "ATP Challenger" = 0.62, ITF_M = 0.61, WTA = 0.56, "WTA Challenger" = 0.555, ITF_W = 0.55, men = 0.63, women = 0.555 }
+anchor_window_s = 600             # serve strengths implied by the market over the last 10 min ...
+anchor_exclude_s = 60             # ... excluding the last minute (recent moves are what we judge)
+anchor_sample_s = 20
+anchor_min_samples = 5
+anchor_max_spread_cents = 4.0
+max_range_cents = 15.0            # reference range this wide -> confidence 0
+context_stale_s = 10              # score older than this -> no event-aware signal
+provisional_mapping_factor = 0.7  # confidence multiplier until price reactions confirm the player mapping
+mapping_min_events = 8
+mapping_agree = 0.6
+mapping_vote_delay_s = 20
+response_window_s = 120           # observed vs justified move window (or since the last score event)
+record_min_dislocation_cents = 1.0
+min_dislocation_cents = 3.0
+min_move_cents = 3.0
+max_completion = 0.7              # momentum: enter only while < 70% of the justified move is done
+capture_frac = 0.8                # target = entry + 80% of the gap to the reference
+stabilize_s = 10
+stabilize_velocity = 0.5
+min_bounce_cents = 1.0
+latency_s = 2.5
+edge_buffer_cents = 0.5
+min_confidence = 0.35
+min_edge_score = 55
+min_quality_score = 45
+prior_fill_probability = 0.5
+stop_min_cents = 4.0
+stop_vol_mult = 2.5
+exit_buffer_cents = 1.0
+exit_min_remaining_cents = 1.5
+thesis_buffer_cents = 2.0
+scale_out_frac = 0.5              # first take-profit for half the position half-way to target (0 = off)
+flow_short_s = 10
+flow_long_s = 120
+large_trade_contracts = 500
+flow_shock_mult = 3.0
+
 [kill_switch]
 file = "data/KILL_SWITCH"         # touch it to stop new orders
 cancel_open_orders = true

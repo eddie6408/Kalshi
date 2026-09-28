@@ -255,6 +255,8 @@ class Signal:
     reject_reason: str = ""
 
     def text(self) -> str:
+        if self.strategy.startswith("EDGE_"):
+            return self._edge_text()
         e = self.explanation
         lines = [
             f"STRATEGY: {self.strategy} ({self.strategy_version})",
@@ -275,6 +277,34 @@ class Signal:
             "REASON: " + "; ".join(self.reasons),
         ]
         return "\n".join(lines)
+
+    def _edge_text(self) -> str:
+        return _edge_text_impl(self)
+
+
+def _edge_text_impl(sig: "Signal") -> str:
+    e = sig.explanation
+    rng = e.get("reference_range") or [None, None]
+    lines = [
+        f"STRATEGY: {e.get('classification', sig.strategy)} ({sig.strategy_version})",
+        f"TAGS: {', '.join(e.get('tags', []))}",
+        f"MARKET: {e.get('market', sig.ticker)}",
+        f"CURRENT: {_c(e.get('current'))}   REFERENCE: {_c(e.get('reference'))}   RANGE: {_c(rng[0])}-{_c(rng[1])}",
+        f"RECENT HIGH: {_c(e.get('recent_high'))}   OBSERVED MOVE: {e.get('observed_move')}c   "
+        f"JUSTIFIED MOVE: {e.get('justified_move')}c   OVERREACTION: {e.get('overreaction')}c ({e.get('window')})",
+        f"EVENT: {e.get('event')}   IMPACT: {e.get('event_impact')}   SCORE: {e.get('score_state')}",
+        f"ORDER FLOW: {e.get('order_flow')}",
+        f"ORDER BOOK: imbalance {(e.get('order_book') or {}).get('imbalance')}, bids "
+        f"{'replenishing' if (e.get('order_book') or {}).get('bid_replenishing') else 'not replenishing'}",
+        f"REVERSAL: +{e.get('reversal')}c   LIQUIDITY: ${e.get('liquidity')}   SPREAD: {e.get('spread')}c",
+        f"ENTRY: {_c(e.get('entry_price'))}   EXPECTED REMAINING MOVE: {e.get('expected_remaining_move')}c   "
+        f"MIN REQUIRED: {e.get('min_required_move')}c   ESTIMATED NET EDGE: {e.get('estimated_net_edge')}c",
+        f"EDGE SCORE: {e.get('edge_score')}   TRADE QUALITY: {e.get('quality_score')}   "
+        f"EDGE CONFIDENCE: {float(e.get('edge_confidence') or 0):.0%}   FILL PROBABILITY: {float(e.get('fill_probability') or 0):.0%}",
+        f"ACTION: {sig.action}",
+        "REASON: " + "; ".join(sig.reasons),
+    ]
+    return "\n".join(lines)
 
 
 def _c(v) -> str:

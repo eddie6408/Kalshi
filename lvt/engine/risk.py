@@ -38,7 +38,7 @@ from lvt.models import MarketInfo, Signal, Snapshot
 
 ACCOUNT_LIMITS = ("max_daily_loss", "max_strategy_loss", "max_trade_frequency", "max_concurrent_positions",
                   "max_total_exposure", "max_event_exposure", "drawdown_halving")
-RESEARCH_ENVS = ("PAPER", "BACKTEST")     # the only environments allowed to waive account limits
+RESEARCH_ENVS = ("PAPER", "PAPER_EDGE", "BACKTEST")   # the only environments allowed to waive account limits
 
 
 @dataclass
@@ -177,6 +177,9 @@ class RiskEngine:
         vol_scale = min(1.0, r.target_volatility / vol)
         qty *= vol_scale
         qty *= max(min(sig.score / 100.0, 1.0), 0.0)
+        conf = sig.explanation.get("confidence")
+        if conf is not None:                       # confidence-aware sizing (never above the caps below)
+            qty *= max(min(float(conf), 1.0), 0.0)
         dd = (self.peak_equity - equity) / self.peak_equity if self.peak_equity > 0 else 0.0
         if dd >= r.drawdown_halving_pct:
             if self.limits_enforced:

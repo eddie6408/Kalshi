@@ -139,6 +139,36 @@ def load_trades(tape: Database, start: float, end: float) -> list[Trade]:
     return [Trade(r[1], r[0], r[2], r[3], r[4], r[5]) for r in rows]
 
 
+BASE_CTX_KEYS = ("status", "score", "period", "clock", "competitors")
+
+
+def load_contexts(tape: Database, start: float, end: float):
+    """Recorded live-score snapshots as EventContext objects, time-ordered."""
+    from lvt.data.provider import EventContext
+    out = []
+    try:
+        rows = tape.conn.execute("SELECT ts, event_ticker, provider, sport, status, event_ts, summary FROM context "
+                                 "WHERE ts>=? AND ts<? ORDER BY ts", (start, end)).fetchall()
+    except Exception:
+        return out
+    for ts, ev, prov, sport, status, ets, summary in rows:
+        s = json.loads(summary or "{}")
+        out.append(EventContext(ev, prov or "", sport or "", status or "unknown", ts, ets or 0.0,
+                                s.get("competitors") or [], s.get("score") or "", s.get("period") or "",
+                                s.get("clock") or "", {k: v for k, v in s.items() if k not in BASE_CTX_KEYS}))
+    return out
+
+
+def load_event_meta(tape: Database) -> dict:
+    try:
+        rows = tape.query("SELECT * FROM event_meta")
+    except Exception:
+        return {}
+    return {r["event_ticker"]: {"milestone_id": r["milestone_id"], "type": r["type"], "title": r["title"],
+                                "details": json.loads(r["details"] or "{}"), "group": json.loads(r["grp"] or "[]"),
+                                "start_date": r["start_date"]} for r in rows}
+
+
 def iter_snapshots(tape: Database, start: float, end: float, tickers: set[str] | None = None,
                    step_s: float = 2.0, keepalive_s: float = 6.0) -> Iterator[tuple[float, dict[str, Snapshot]]]:
     """Yield (t, {ticker: Snapshot}) every `step_s` of recorded time.

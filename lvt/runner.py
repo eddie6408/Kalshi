@@ -76,6 +76,8 @@ class LiveRunner:
         self.monitor = ResourceMonitor()
         self.venue = None
         self.engine: Engine | None = None
+        self.edge_engine: Engine | None = None
+        self.venue2 = None
         self.timers: dict[str, float] = {}
         self.depth_rr = 0
         self.ctx_last: dict[str, float] = {}
@@ -130,6 +132,7 @@ class LiveRunner:
         self.engine = Engine(cfg, self.env, self.run_id, self.db, self.venue, self.scanner.markets,
                              self.alerter, self.clock)
         self.engine.risk.fail_closed["STARTUP"] = "reconciliation has not completed"
+        self.edge_engine = self._build_edge_engine()
         if self.mode in ("SHADOW", "LIVE"):
             from lvt.live_gate import limits_reviewed
             if limits_reviewed(cfg, self.db) is None:
@@ -147,6 +150,8 @@ class LiveRunner:
         self.alerter.fire("BOT_STARTED", f"started in {self.mode} mode ({self.run_id})", "INFO")
         now = time.time()
         self.engine.restore(now)
+        if self.edge_engine is not None:
+            self.edge_engine.restore(now)
         # discovery: catalog + first sweep synchronously so we start with a universe
         self._refresh_catalog()
         self._sweep()
@@ -154,18 +159,45 @@ class LiveRunner:
         self._startup_reconcile()
         self.last_quote_ok = time.time()          # the first sweep is not a data outage
 
-    def _startup_reconcile(self) -> None:
-        e = self.engine
-        still = e.om.resolve_unknown(time.time())
-        res = reconcile(e.book, self.venue, still)
-        self._record_reconcile(res, startup=True)
-        if res.ok:
-            e.risk.fail_closed.pop("STARTUP", None)
-            log.info("startup reconciliation OK: %s", res.summary())
+    def _build_edge_engine(self):
+        """EDGE_ENGINE_V1 as a challenger in its own paper account (PAPER only)."""
+        ecfg = self.cfg.data.get("edge", {})
+        if self.mode != "PAPER" or not ecfg.get("enabled", False):
+            return None
+        from collections import ChainMap
 
-    def _record_reconcile(self, res, startup=False) -> None:
-        e = self.engine
-        self.db.insert("status", {"k": "reconcile", "ts": time.time(),
+        from lvt.edge.engine import EdgeEngine
+        env2 = ecfg.get("env", "PAPER_EDGE")
+        markets = ChainMap(self.scanner.markets, self.companion_info)
+        venue2 = PaperVenue(self.cfg, env2, markets)
+        venue2.restore(self.db)
+        edge = EdgeEngine(self.cfg, self.db, env2, self.run_id, self.engine.series,
+                          lambda t: self.scanner.markets.get(t) or self.companion_info.get(t),
+                          lambda ev: self.ctx_fetch.providers[0].meta.get(ev))
+        eng = Engine(self.cfg, env2, self.run_id, self.db, venue2, markets, self.alerter, self.clock,
+                     strategies=[], edge=edge, series=self.engine.series, metrics=self.engine.metrics,
+                     contexts=self.engine.contexts, owns_metrics=False)
+        eng.risk.fail_closed["STARTUP"] = "reconciliation has not completed"
+        self.venue2 = venue2
+        log.info("A/B challenger %s running in paper account %s", edge.version, env2)
+        return eng
+
+    def _engines(self):
+        return [(self.engine, self.venue, "reconcile")] + (
+            [(self.edge_engine, self.venue2, "reconcile_edge")] if self.edge_engine is not None else [])
+
+    def _startup_reconcile(self) -> None:
+        for e, venue, key in self._engines():
+            still = e.om.resolve_unknown(time.time())
+            res = reconcile(e.book, venue, still)
+            self._record_reconcile(res, startup=True, engine=e, key=key)
+            if res.ok:
+                e.risk.fail_closed.pop("STARTUP", None)
+                log.info("startup reconciliation OK (%s): %s", e.env, res.summary())
+
+    def _record_reconcile(self, res, startup=False, engine=None, key="reconcile") -> None:
+        e = engine or self.engine
+        self.db.insert("status", {"k": key, "ts": time.time(),
                                   "v": {"ok": res.ok, "summary": res.summary(), "mismatches": res.mismatches,
                                         "startup": startup}}, replace=True)
         if res.ok:
@@ -243,7 +275,9 @@ class LiveRunner:
         now = time.time()
         self._check_kill_switch(now)
         with self.lock:
-            pinned = {p.ticker for p in e.book.open_positions()} | {r.ticker for r in e.om.working.values()}
+            pinned = set()
+            for eng, _, _ in self._engines():
+                pinned |= {p.ticker for p in eng.book.open_positions()} | {r.ticker for r in eng.om.working.values()}
             hot = self.scanner.select_hot(now, pinned)
         snaps: dict[str, Snapshot] = {}
         self.companions = self._companions(hot) if hot else []
@@ -281,6 +315,10 @@ class LiveRunner:
         trades, covers = self._fetch_trades(set(hot) | pinned)
         self._clock_check()
         e.on_snapshots(snaps, time.time(), tradeable=set(hot), trades=trades, trade_feed_covers=covers)
+        if self.edge_engine is not None:
+            # same data, separate paper account; it may also trade the match-group companions
+            self.edge_engine.on_snapshots(snaps, time.time(), tradeable=set(hot) | set(self.companions),
+                                          trades=trades, trade_feed_covers=covers)
         self._periodic(time.time())
 
     def _fetch_depth(self, hot: list[str], pinned: set[str]) -> dict:
@@ -368,6 +406,8 @@ class LiveRunner:
             e.contexts[ev] = c
             self.tape.record_context(c)
             found = self.event_detector.update(c)
+            if self.edge_engine is not None:
+                self.edge_engine.edge.on_context(c, found, now)
             if found:
                 self.sport_events_seen += len(found)
                 self.tape.record_sport_events(found)
@@ -437,7 +477,8 @@ class LiveRunner:
         if on:
             reason = "KILL_SWITCH env" if self.cfg.kill_switch_env else f"file {f.name}: " + (
                 f.read_text().strip()[:200] if f.exists() else "")
-        self.engine.set_kill_switch(on, reason, now)
+        for eng, _, _ in self._engines():
+            eng.set_kill_switch(on, reason, now)
 
     def _due(self, name: str, every: float, now: float) -> bool:
         if now - self.timers.get(name, 0.0) >= every:
@@ -446,15 +487,18 @@ class LiveRunner:
         return False
 
     def _periodic(self, now: float) -> None:
-        cfg, e = self.cfg, self.engine
+        cfg = self.cfg
         if self._due("status", 5, now):
             self._write_status(now)
-        if self._due("reconcile", cfg.execution.reconcile_interval_s, now) and not e.om.working:
-            still = e.om.resolve_unknown(now)
-            res = reconcile(e.book, self.venue, still)
-            self._record_reconcile(res)
-            if res.ok:
-                e.risk.fail_closed.pop("STARTUP", None)
+        if self._due("reconcile", cfg.execution.reconcile_interval_s, now):
+            for eng, venue, key in self._engines():
+                if eng.om.working:
+                    continue
+                still = eng.om.resolve_unknown(now)
+                res = reconcile(eng.book, venue, still)
+                self._record_reconcile(res, engine=eng, key=key)
+                if res.ok:
+                    eng.risk.fail_closed.pop("STARTUP", None)
         if self._due("health", cfg.health.interval_s, now):
             self._health(now)
         if self._due("labeler", cfg.labeler.interval_s, now):
@@ -462,6 +506,10 @@ class LiveRunner:
                 n = label_signals(self.db, self.tape_db, cfg, now)
                 if n:
                     log.info("labeled %d signal outcomes", n)
+                from lvt.edge.diagnostics import run_all
+                done = run_all(self.db, self.tape_db, now)
+                if any(done.values()):
+                    log.info("diagnostics: %s", done)
             except Exception as exc:                          # noqa: BLE001
                 log.warning("labeler failed: %s", exc)
         if self._due("prune", 86400, now):
@@ -489,8 +537,20 @@ class LiveRunner:
             "live_score_events": sum(1 for st in self.ctx_state.values() if st.status == "live"),
             "companions": len(self.companions), "sport_events": self.sport_events_seen, **e.status(),
         }
+        if self.edge_engine is not None:
+            e2 = self.edge_engine
+            status["edge_engine"] = {"env": e2.env, "version": e2.edge.version,
+                                     "equity": round(e2.risk.equity(None), 2),
+                                     "daily_pnl": round(e2.risk.daily_pnl(now), 2),
+                                     "modelled_markets": len(e2.edge.refs.market_match),
+                                     "live_matches": sum(1 for m in e2.edge.refs.matches.values() if m.state is not None),
+                                     **e2.status()}
         self.db.insert("status", {"k": "engine", "ts": now, "v": status}, replace=True)
         rows = e.scanner_json()
+        if self.edge_engine is not None:
+            for r in rows:
+                r.update(self.edge_engine.edge.row_extras(r["ticker"], now, None if r.get("bid") is None or r.get("ask") is None
+                                                          else (r["bid"] + r["ask"]) / 2))
         hot = set(self.scanner.hot)
         self.db.executemany("INSERT OR REPLACE INTO scanner_state VALUES (?,?,?)",
                             [(r["ticker"], now, json.dumps(r, default=str)) for r in rows if r["ticker"] in hot])
@@ -504,7 +564,8 @@ class LiveRunner:
         row = {"ts": now, "run_id": self.run_id, **s, "requests": st.requests, "request_errors": st.errors,
                "http_429": st.http_429, "req_per_s": round(st.req_per_s(), 2), "websockets": 0,
                "max_data_age_s": round(max(ages), 1) if ages else None,
-               "open_positions": len(e.book.open_positions()), "open_orders": len(e.om.working),
+               "open_positions": sum(len(x.book.open_positions()) for x, _, _ in self._engines()),
+               "open_orders": sum(len(x.om.working) for x, _, _ in self._engines()),
                "fail_closed": e.risk.fail_closed, "loop_ms": self.cycle_ms}
         self.db.insert("health", row)
         if s["disk_free_gb"] < cfg.health.min_free_disk_gb:

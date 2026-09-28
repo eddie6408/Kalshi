@@ -34,7 +34,13 @@ log = logging.getLogger("lvt.engine")
 class Engine:
     def __init__(self, cfg, env: str, run_id: str, db: Database, venue: Venue,
                  markets: dict[str, MarketInfo], alerter: Alerter, clock,
-                 strategies: Optional[list[Strategy]] = None, record_scanner: bool = True):
+                 strategies: Optional[list[Strategy]] = None, record_scanner: bool = True,
+                 edge=None, series: Optional[dict] = None, metrics: Optional[dict] = None,
+                 contexts: Optional[dict] = None, owns_metrics: bool = True):
+        """`edge` = an EdgeEngine (EDGE_ENGINE_V1 challenger). A challenger engine
+        shares the primary engine's series/metrics/contexts (same live data)
+        but has its own venue, book, orders and risk - a separate paper
+        account, so the two never trade against each other's positions."""
         self.cfg = cfg
         self.env = env
         self.run_id = run_id
@@ -44,12 +50,14 @@ class Engine:
         self.alerter = alerter
         self.clock = clock
         self.strategies = strategies if strategies is not None else build_strategies(cfg)
-        self.series: dict[str, MarketSeries] = {}
-        self.metrics: dict[str, Metrics] = {}
+        self.series: dict[str, MarketSeries] = series if series is not None else {}
+        self.metrics: dict[str, Metrics] = metrics if metrics is not None else {}
+        self.owns_metrics = owns_metrics
+        self.edge = edge
         self.book = PositionBook(db, env, run_id)
         self.risk = RiskEngine(cfg, db, env, self.book, cfg.app.timezone)
         self.om = OrderManager(db, venue, env, run_id, self._on_order_update)
-        self.contexts: dict[str, EventContext] = {}
+        self.contexts: dict[str, EventContext] = contexts if contexts is not None else {}
         self.watch_seen: dict[tuple, float] = {}
         self.buy_attempts: dict[tuple, float] = {}
         self.cooldown_until: dict[str, float] = {}
@@ -72,6 +80,8 @@ class Engine:
                      trades: Optional[list] = None, trade_feed_covers: Optional[set[str]] = None) -> None:
         if trades is not None:
             self.venue.on_trades(trades, trade_feed_covers)
+            if self.edge is not None:
+                self.edge.on_trades(trades)
         for t, s in snaps.items():
             ser = self.series.get(t)
             if ser is None:
@@ -90,12 +100,14 @@ class Engine:
 
         # 2. metrics for everything we are watching or holding
         held = {p.ticker for p in self.book.open_positions()}
-        for t in set(snaps) | held:
+        for t in (set(snaps) | held) if self.owns_metrics else (held - set(self.metrics)):
             ser = self.series.get(t)
             if ser is not None:
                 m = compute_metrics(ser, now, self.cfg.volatility)
                 if m is not None:
                     self.metrics[t] = m
+        if self.edge is not None:
+            self.edge.step(snaps, now)
 
         # 3. positions: settlement, marking, exits
         self._manage_positions(now)
@@ -115,9 +127,12 @@ class Engine:
 
         # 5. entries
         candidates = tradeable if tradeable is not None else set(snaps)
-        for t in candidates:
-            if t in snaps:
-                self._evaluate_market(t, snaps[t], now)
+        if self.edge is not None:
+            self._edge_entries(snaps, candidates, now)
+        else:
+            for t in candidates:
+                if t in snaps:
+                    self._evaluate_market(t, snaps[t], now)
 
         self._prune(now)
 
@@ -144,6 +159,13 @@ class Engine:
             if w is None and self.om.has_working(p.ticker):
                 continue                                   # an UNKNOWN order: fail closed on this market
             if p.status == "PENDING":
+                if (self.edge is not None and p.strategy.startswith("EDGE_") and w is not None
+                        and w.purpose == "ENTRY" and w.post_only):
+                    ok, why = self.edge.entry_still_valid(p.ticker, p.side, w.limit_price, now)
+                    if not ok:
+                        self._log_decision(p, "CANCEL_ENTRY", why, now)
+                        self.om.cancel(w.client_order_id, now)
+                        continue
                 # resting maker entry, nothing filled yet: drop it if the thesis died first
                 bid = snap.bid(p.side)
                 if w is not None and w.purpose == "ENTRY" and w.post_only and p.stop and bid is not None and bid <= p.stop:
@@ -158,8 +180,13 @@ class Engine:
             if age > self.cfg.eligibility.max_data_age_s and not self.emergency_reason:
                 self._maybe_hold_log(p, f"HOLD: data {age:.1f}s stale - not acting on untrusted prices", now)
                 continue
-            dec, hold = evaluate_exit(p, snap, m, info, now, self.cfg.exits,
-                                      self.contexts.get(p.event_ticker), self.emergency_reason)
+            edge_pos = self.edge is not None and p.strategy.startswith("EDGE_")
+            dec = self.edge.exit_check(p, snap, now) if (edge_pos and not self.emergency_reason) else None
+            hold = ""
+            if dec is None:
+                dec, hold = evaluate_exit(p, snap, m, info, now, self.cfg.exits,
+                                          self.contexts.get(p.event_ticker), self.emergency_reason,
+                                          skip=("REVERSAL_EXIT", "MOMENTUM_EXIT") if edge_pos else ())
             if dec is None:
                 if w is None:
                     self._place_take_profit(p, snap, now, mk)
@@ -180,12 +207,18 @@ class Engine:
                 or now < p._tp_next_ts):
             return
         price = float(min(99, math.ceil(p.target - 1e-9)))
+        qty = p.qty
+        frac = float(self.cfg.data.get("edge", {}).get("scale_out_frac", 0.0)) if self.edge is not None else 0.0
+        if frac > 0 and p.strategy.startswith("EDGE_") and p.exit_qty == 0 and p.qty >= 2:
+            half = float(math.ceil(p.avg_entry + (p.target - p.avg_entry) / 2.0 - 1e-9))
+            if half < price:
+                price, qty = half, max(1, math.ceil(p.qty * frac))    # scale out: part half-way, rest at target
         bid = snap.bid(p.side)
         if bid is not None and price <= bid:
             return                                         # already there: the exit engine takes it
         p._tp_next_ts = now + float(mk.get("tp_retry_s", 10))
         req = OrderRequest(client_order_id=new_id("lvt"), ticker=p.ticker, event_ticker=p.event_ticker,
-                           action="sell", side=p.side, count=p.qty, limit_price=price, purpose="TAKE_PROFIT",
+                           action="sell", side=p.side, count=qty, limit_price=price, purpose="TAKE_PROFIT",
                            ref_price=price, created_ts=now, position_id=p.id, signal_id=p.signal_id,
                            exit_reason="FIXED_PROFIT_TARGET", data_ts=snap.ts, signal_ts=now,
                            strategy=p.strategy, post_only=True, tif="GTC")
@@ -303,6 +336,51 @@ class Engine:
             self.counters["buy_signals"] += 1
             row["action"] = f"BUY {sig.side.upper()} ({strat.name})"
             self._try_enter(sig, snap, m, info, now, ctx)
+
+    def _edge_entries(self, snaps: dict[str, Snapshot], candidates: set, now: float) -> None:
+        """EDGE_ENGINE_V1 decision path (brief section 49): valid data ->
+        executable market -> reference/dislocation/confirmation -> ranked
+        by expected net edge x trade quality x confidence x fill probability
+        -> risk -> execution. NO_EDGE and WATCH results are recorded too."""
+        from lvt.edge.engine import exposed_matches
+        exposed = exposed_matches(self.edge, self.book)
+        buys = []
+        for t in candidates:
+            snap = snaps.get(t)
+            info = self.markets.get(t) or self.edge.get_info(t)
+            if snap is None or info is None:
+                continue
+            if now - snap.ts > self.cfg.eligibility.max_data_age_s:
+                continue                                       # IS DATA VALID? no -> no trade
+            m = self.metrics.get(t)
+            if m is None or m.history_s < self.cfg.signals.min_history_s:
+                continue
+            sig = self.edge.evaluate(t, snap, m, info, now, exposed)
+            if sig is None:
+                continue
+            if sig.action == "BUY":
+                buys.append((sig, snap, m, info))
+                continue
+            k = (t, sig.strategy, sig.anchor)
+            if now - self.watch_seen.get(k, -1e18) < 300:
+                continue
+            self.watch_seen[k] = now
+            sig.decision = sig.action                          # WATCH | NO_EDGE
+            self._record_signal(sig)
+        buys.sort(key=lambda x: -float(x[0].explanation.get("rank", 0.0)))
+        for sig, snap, m, info in buys:
+            k = (sig.ticker, sig.strategy, sig.anchor)
+            last = self.buy_attempts.get(k)
+            if last is not None and now - last < self.cfg.signals.cooldown_s:
+                continue
+            mev = self.edge.match_of(sig.ticker)
+            if mev in exposed:
+                continue                                       # one position per match (correlation)
+            self.buy_attempts[k] = now
+            self.counters["buy_signals"] += 1
+            self._try_enter(sig, snap, m, info, now, self.contexts.get(info.event_ticker))
+            if self.book.by_ticker(sig.ticker) is not None:
+                exposed.add(mev)
 
     def _try_enter(self, sig: Signal, snap: Snapshot, m: Metrics, info: MarketInfo, now: float,
                    ctx: Optional[EventContext]) -> None:

@@ -89,6 +89,17 @@ A report prints "INSUFFICIENT SAMPLE" below 100 trades and never states that a
 strategy is profitable; it states whether net expectancy is more than 2
 standard errors from zero in that sample.
 
+### A/B: baseline vs EDGE_ENGINE_V1
+```bash
+lvt ab                          # BASELINE_V1 (PAPER) vs EDGE_ENGINE_V1 (PAPER_EDGE), 95% CIs
+lvt ab --record                 # also store the result in strategy_experiments
+lvt report --env PAPER_EDGE     # the challenger's own report
+lvt backtest --edge             # replay the challenger on the recorded tape (scores included)
+```
+The challenger is never promoted automatically; it is only a candidate if
+its net expectancy beats the tennis baseline with the 95% interval of the
+difference excluding zero, over an adequate sample (brief section 66).
+
 ## 7. Emergency shutdown
 Fastest (running bot reacts within one 2 s cycle, state preserved):
 ```bash

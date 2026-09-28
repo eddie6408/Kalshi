@@ -24,30 +24,50 @@ The missing input is *why* the price moved: repricing on real information
 vs. overreaction to order flow. That needs the live score.
 
 ## Phases (section 65) and status
-| Phase | Scope | Status |
+| Phase | Scope | Status (2026-09-28) |
 |---|---|---|
-| 1 | Event-data collection + timestamp sync | **done 2026-09-28**: live tennis scores every ~4 s (was ~100-200 s); full raw payload kept; match-group companion markets recorded every cycle; event_meta; sport_events timeline (POINT_WON / GAME_WON HOLD-BREAK / SET_WON / STATUS) with provider + receive clocks and quality flags (LAGGED, OUT_OF_ORDER, NO_PROVIDER_TS, GAP, MULTI); exchange-timestamped trade prints since 05:43 |
-| 2 | Event-response classification (severity per event type, expected vs actual price response) | needs 1-2 days of dense data; first check the raw payload for a server field and whether provider timestamps exist |
-| 3 | Deterministic reference value (tennis: Markov win probability from score state + serve-hold rates implied by the pre-match price) with confidence/range | after phase 2 data; validate offline first |
-| 4 | Dislocation / overreaction engine + justified-move filter | offline test: does (reference - market) predict the next minutes' move? |
-| 5 | Momentum completion (share of the expected move already done) | with 3-4 |
-| 6 | Order flow (signed volume from trade prints) + book imbalance/replenishment | data already recorded (trades, depth) |
-| 7 | Unified edge score: strategic edge vs trade quality kept separate | |
-| 8 | Enhanced entry/exit (reference reached, edge collapsed, scale-out) | |
-| 9 | BASELINE_V1 vs EDGE_ENGINE_V1 A/B in paper | |
-| 10 | Analysis with confidence intervals, win/loss attribution engines | |
+| 1 | Event-data collection + timestamp sync | done (60819bb) |
+| 2 | Event-response classification | done: `event_responses` per score change and market (kinds, BREAK/HOLD, BREAK_POINT/SET_POINT/MATCH_POINT tags, severity from the model's expected impact), labelled later with the actual 10/30/60/180 s move -> OVERREACTED / PROPORTIONATE / UNDERREACTED / CONTRARY / NOISE |
+| 3 | Deterministic reference value | done: `lvt/edge/tennis_model.py` (exact point->game->tiebreak->set->match Markov model) + `reference.py` (serve strengths implied by the market over the last 10 min excluding the last 60 s; range from the IQR of those; confidence from range, samples, score freshness, mapping confirmation) |
+| 4 | Dislocation / overreaction + justified-move filter | done: DISLOCATION_REVERSAL / FLOW_REVERSAL vs EVENT_REPRICING, reaction measured from the last poll that still showed the old score |
+| 5 | Momentum completion | done: UNFINISHED_MOMENTUM only while < 70% of the justified move is done |
+| 6 | Order flow + book confirmation | done: signed taker flow (10 s / 120 s), shock vs sustained, book imbalance / replenishment |
+| 7 | Unified edge score | done: STRATEGIC EDGE and TRADE QUALITY scored separately, both must pass; fill probability from the engine's own maker fill rate |
+| 8 | Enhanced entry/exit | done: sequential confirmation, MIN_REQUIRED_MOVE, maker entry, ranking by net edge x quality x confidence x fill probability, one position per match, entry decay, REFERENCE_VALUE_REACHED / EDGE_COLLAPSED / THESIS_INVALIDATED exits, scale-out take-profit |
+| 9 | BASELINE_V1 vs EDGE_ENGINE_V1 A/B | running in paper: env PAPER (baseline, unchanged) vs PAPER_EDGE (challenger, own account), same live data; `lvt ab` |
+| 10 | Analysis | `lvt ab`, `lvt report --env PAPER_EDGE`, trade_diagnostics, counterfactuals; needs data |
+
+Tennis only. Every other sport / market type has no reference and is
+therefore NO_EDGE in the challenger (the baseline keeps trading it).
+
+## Result that motivated the A/B (2026-09-28 replay grid)
+All 14 price-only variants lost on the training evening AND the validation
+night (best validation: bigger moves -$0.91/trade, 678 trades).
 
 ## Data now recorded (tape.db)
 `quotes` (hot + companion markets, 2 s), `depth`, `trades` (exchange prints,
 exchange time), `context` (live score incl. raw payload), `sport_events`
 (derived timeline), `event_meta` (competitors, best-of, round, match group).
 
-## Open questions for phase 2
-* Which raw tennis field names the server (none seen in the 09-27 payload;
-  hold/break is currently inferred from service_games_won / breakpoints_won).
-* Whether live_data carries a provider timestamp (if not, event time =
-  receive time and every event is flagged NO_PROVIDER_TS).
-* Mapping competitor1/2 to each market's YES side (event title order,
-  competitor ids in event_meta vs market sub-titles).
+## Resolved 2026-09-28 (from live payloads)
+* `server` = the serving competitor's id (compare with competitor1_id /
+  competitor2_id); points are 0/15/30/40 with `advantage` = the id holding it;
+  tiebreak points are plain integers at 6-6 games.
+* live_data carries no provider timestamp: event time = receive time
+  (~4 s resolution), every event flagged NO_PROVIDER_TS; market reaction
+  timing comes from exchange-timestamped trade prints.
+* competitor1 = first name in the match title = first half of the event
+  code; market-side mapping must agree by code and by name, and is then
+  confirmed (or rejected) by how prices react to scored points.
 * The brief's section 28-29 rule change: event data now informs a reference
   value (not a settlement bet); agreed with the user on 2026-09-28.
+
+## Known limitations of EDGE_ENGINE_V1
+* Score polling (~4 s) is slower than Kalshi's repricing: the engine cannot
+  front-run events and does not try to; it judges moves after the fact.
+* Serve strengths are anchored to the market, so a persistent market error
+  lasting > 10 min is absorbed into the reference, not traded.
+* Independent-points model: no momentum/fatigue/injury effects; confidence
+  and range express the uncertainty of the anchor, not of the model form.
+* Set-winner markets are priced only for the current set; game-spread,
+  totals and exact-score markets are not modelled (NO reference).

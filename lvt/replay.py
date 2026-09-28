@@ -38,7 +38,7 @@ from lvt.labeler import label_signals
 from lvt.models import FillEvent, deterministic_ids
 from lvt.fees import fee_usd
 from lvt.reports import closed, metrics
-from lvt.tape import iter_snapshots, load_markets, load_trades
+from lvt.tape import iter_snapshots, load_contexts, load_event_meta, load_markets, load_trades
 
 log = logging.getLogger("lvt.replay")
 
@@ -52,7 +52,9 @@ def data_range(tape: Database) -> tuple[float, float]:
 
 def run_replay(cfg: Config, tape: Database, start: float, end: float, out_dir: Path,
                kind: str = "backtest", segment: str = "all", state_db: Database | None = None,
-               params: dict | None = None, label: bool = True) -> dict:
+               params: dict | None = None, label: bool = True, edge: bool = False) -> dict:
+    """`edge=True` replays EDGE_ENGINE_V1 instead of the baseline strategies,
+    feeding the recorded live-score snapshots in time order."""
     run_id = f"bt-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     out_dir.mkdir(parents=True, exist_ok=True)
     db_path = out_dir / f"{run_id}.db"
@@ -63,8 +65,21 @@ def run_replay(cfg: Config, tape: Database, start: float, end: float, out_dir: P
     markets = load_markets(tape)
     clock = ReplayClock(start)
     venue = PaperVenue(cfg, "BACKTEST", markets)
-    engine = Engine(cfg, "BACKTEST", run_id, db, venue, markets, Alerter(None, run_id, 1e9), clock,
-                    record_scanner=False)
+    edge_engine = None
+    contexts, ci, detector = [], 0, None
+    if edge:
+        from lvt.data.events import EventDetector
+        from lvt.edge.engine import EdgeEngine
+        meta = load_event_meta(tape)
+        contexts = load_contexts(tape, start - 60, end)
+        detector = EventDetector()
+        engine = Engine(cfg, "BACKTEST", run_id, db, venue, markets, Alerter(None, run_id, 1e9), clock,
+                        record_scanner=False, strategies=[])
+        edge_engine = EdgeEngine(cfg, db, "BACKTEST", run_id, engine.series, markets.get, meta.get)
+        engine.edge = edge_engine
+    else:
+        engine = Engine(cfg, "BACKTEST", run_id, db, venue, markets, Alerter(None, run_id, 1e9), clock,
+                        record_scanner=False)
     t_wall = time.time()
     steps = 0
     last_snaps = {}
@@ -77,6 +92,11 @@ def run_replay(cfg: Config, tape: Database, start: float, end: float, out_dir: P
     for t, snaps in iter_snapshots(tape, start, end, step_s=cfg.discovery.quote_interval_s,
                                    keepalive_s=cfg.discovery.quote_interval_s * 3):
         clock.advance_to(t)
+        while ci < len(contexts) and contexts[ci].fetched_ts <= t:     # scores known by time t, in order
+            c = contexts[ci]
+            ci += 1
+            engine.contexts[c.event_ticker] = c
+            edge_engine.on_context(c, detector.update(c), c.fetched_ts)
         batch = []
         while ti < len(trades) and trades[ti].ts <= t:
             batch.append(trades[ti])
@@ -109,7 +129,8 @@ def run_replay(cfg: Config, tape: Database, start: float, end: float, out_dir: P
     summary = {"run_id": run_id, "kind": kind, "segment": segment, "ts": time.time(), "data_start": start,
                "data_end": end, "params": params or {}, "metrics": m, "git_commit": git_commit(cfg.root),
                "config_hash": cfg.config_hash(),
-               "strategy_versions": {s.name: s.version for s in engine.strategies}, "db_path": str(db_path)}
+               "strategy_versions": ({"EDGE": edge_engine.version} if edge_engine is not None
+                                     else {s.name: s.version for s in engine.strategies}), "db_path": str(db_path)}
     if state_db is not None:
         state_db.insert("backtest_runs", summary)
     db.close()
