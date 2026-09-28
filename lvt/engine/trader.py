@@ -128,6 +128,7 @@ class Engine:
                 continue
             q = snap.quote
             if q.result in ("yes", "no") and q.status in ("settled", "finalized", "determined") and p.status == "OPEN":
+                self.om.record_settlement(p.ticker, p.side, p.qty, q.result, p.id, now)
                 self.book.settle(p, q.result, now)
                 self._log_decision(p, "SETTLED", f"market settled {q.result}", now)
                 continue

@@ -104,6 +104,21 @@ class OrderManager:
         })
         self.on_update(req, up)
 
+    def record_settlement(self, ticker: str, side: str, qty: int, result: str, position_id: str,
+                          now: float) -> None:
+        """A market settled while we held it. Not an order - the exchange
+        closes the position - but it must leave the same trail as one so the
+        venue ledger, restarts and reconciliation all agree."""
+        if qty <= 0:
+            return
+        payout = 100.0 if result == side else 0.0
+        self.db.insert("fills", {"client_order_id": f"settle-{position_id}", "run_id": self.run_id, "env": self.env,
+                                 "ts": now, "ticker": ticker, "side": side, "action": "settle", "price": payout,
+                                 "count": qty, "fee_usd": 0.0, "exchange_fill_id": f"settlement-{result}"})
+        on_settle = getattr(self.venue, "on_settlement", None)
+        if on_settle is not None:
+            on_settle(ticker)
+
     def cancel_all(self, now: float) -> None:
         for coid, req in list(self.working.items()):
             try:

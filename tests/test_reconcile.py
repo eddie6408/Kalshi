@@ -55,5 +55,28 @@ class TestReconcile(unittest.TestCase):
                 self.assertTrue(r.ok, (t, r.mismatches))
 
 
+class TestSettlement(unittest.TestCase):
+    def test_settled_position_keeps_book_and_venue_in_sync_across_restart(self):
+        h = Harness(only("DIP"))
+        tk = list(h.markets)[0]
+        opened = None
+        for t, mid in path(DIP):
+            h.step(t, {tk: mid_to_book(mid)})
+            if any(p.status == "OPEN" for p in h.engine.book.open_positions()):
+                opened = t
+                break
+        self.assertIsNotNone(opened)
+        b, a = mid_to_book(50)
+        h.step(opened + 2, {tk: (b, a)}, status="finalized", result="no")
+        self.assertEqual(h.engine.book.open_positions(), [])
+        self.assertEqual(h.venue.positions(), {})
+        self.assertTrue(reconcile(h.engine.book, h.venue, []).ok)
+        self.assertEqual(h.db.one("SELECT exit_reason FROM positions")["exit_reason"], "SETTLED_NO")
+        self.assertEqual(h.db.scalar("SELECT COUNT(*) FROM fills WHERE action='settle'"), 1)
+        h2 = Harness(only("DIP"), db_path=h.db_path)            # restart: ledger rebuilt from fills
+        h2.engine.restore(h2.clock.now())
+        self.assertTrue(reconcile(h2.engine.book, h2.venue, []).ok)
+
+
 if __name__ == "__main__":
     unittest.main()

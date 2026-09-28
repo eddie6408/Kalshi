@@ -41,6 +41,7 @@ class PaperVenue(Venue):
         net: dict[tuple[str, str], int] = {}
         for r in rows:
             k = (r["ticker"], r["side"])
+            # 'sell' and 'settle' (market settled while held) both close contracts
             net[k] = net.get(k, 0) + (r["n"] if r["action"] == "buy" else -r["n"])
         self.ledger = {t: (s, n) for (t, s), n in net.items() if n > 0}
 
@@ -77,6 +78,10 @@ class PaperVenue(Venue):
                     self.ledger.pop(req.ticker, None)
             out.append(up)
         return out
+
+    def on_settlement(self, ticker: str) -> None:
+        """The market settled: the exchange closes every position in it."""
+        self.ledger.pop(ticker, None)
 
     def cancel(self, client_order_id: str, now: float) -> OrderUpdate:
         if client_order_id in self.pending:
