@@ -143,6 +143,8 @@ class KalshiFeed:
         #: exchange will not re-snapshot is not asked for on every message
         self._resnap_at: dict[str, float] = {}
         self._last_rollover = time.monotonic()
+        #: Package 3a: every snapshot and delta applied, kept for replay.
+        self.recorder = None
         # The store serves a quiet book this feed maintains for as long as
         # the connection is up (MarketState._fresh).
         if hasattr(state, "feed_live"):
@@ -353,6 +355,9 @@ class KalshiFeed:
         no = self._levels(msg, "no")
         # seq=None: the store must not check it per market - see _in_order.
         self.state.apply_snapshot(ticker, yes, no, seq=None)
+        if self.recorder is not None:
+            self.recorder.record("demo_ws", {"k": "s", "m": ticker, "sid": payload.get("sid"),
+                                             "seq": payload.get("seq"), "yes": yes, "no": no})
         self._pending_resnapshot.discard(ticker)
         self.stats.snapshots += 1
 
@@ -399,6 +404,10 @@ class KalshiFeed:
             return
 
         ok = self.state.apply_delta(ticker, side, price, delta, seq=None)
+        if self.recorder is not None:
+            self.recorder.record("demo_ws", {"k": "d", "m": ticker, "sid": payload.get("sid"),
+                                             "seq": payload.get("seq"), "s": side,
+                                             "p": price, "q": delta, "ok": bool(ok)})
         if ok:
             self.stats.deltas += 1
         else:

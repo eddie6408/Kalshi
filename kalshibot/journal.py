@@ -347,6 +347,48 @@ CREATE TABLE IF NOT EXISTS opportunity_events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_opp ON opportunity_events(opportunity_id);
 
+-- Package C2, phase M0: a SIMULATED resting (maker) order for an entry the
+-- forecast strategy priced, checked against the PRODUCTION trade tape. No
+-- order is ever sent; this measures whether one would have filled, and what
+-- the price did afterwards (adverse selection). Times are unix seconds.
+CREATE TABLE IF NOT EXISTS maker_shadow (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at REAL NOT NULL,
+    ticker TEXT NOT NULL,
+    series TEXT,
+    side TEXT NOT NULL,              -- the side we would BUY
+    probability_yes REAL,
+    fair_cents REAL,                 -- our probability of `side`, in cents
+    stage TEXT,                      -- ACCEPTED, or the stage that blocked it
+    reason TEXT,
+    lead_hours REAL,
+    book_age_s REAL,                 -- how old the production book was
+    best_bid INTEGER,                -- production, on `side`
+    best_ask INTEGER,
+    price_cents INTEGER NOT NULL,    -- where the order would rest
+    contracts INTEGER NOT NULL,
+    queue_ahead INTEGER,             -- displayed size at our price when posted
+    maker_fee_cents REAL,
+    taker_fee_cents REAL,            -- per contract, had we crossed instead
+    expires_at REAL NOT NULL,
+    state TEXT NOT NULL,             -- OPEN, FILLED, PARTIAL, EXPIRED,
+                                     -- INTERRUPTED (bot restarted; excluded)
+    filled INTEGER DEFAULT 0,
+    first_fill_at REAL,
+    full_fill_at REAL,
+    fill_kind TEXT,                  -- through (price traded past us) | queue
+    drift_5m REAL,                   -- production mid on `side` minus our
+    drift_30m REAL,                  -- price, N minutes after the first fill
+    drift_60m REAL,                  -- (positive = moved our way)
+    closed_at REAL,
+    settled_yes INTEGER,
+    maker_markout_cents REAL,        -- per contract at settlement, if filled
+    taker_markout_cents REAL,        -- per contract had we crossed at the ask
+    code_version TEXT,
+    config_version TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_maker_shadow_state ON maker_shadow(state, ticker);
+
 -- An operator acknowledging a tripped consecutive-loss breaker. Losses
 -- closed before the latest row no longer count toward the run.
 CREATE TABLE IF NOT EXISTS breaker_resets (
@@ -663,6 +705,18 @@ class Journal:
             # moment - so the two can be scored like for like.
             "model": "TEXT",
             "alt_probability": "REAL",
+            # Package 3a: the PRODUCTION book at (about) the same moment, so
+            # the model can be benchmarked against the market that matters.
+            "prod_yes_ask_cents": "REAL",
+            "prod_yes_bid_cents": "REAL",
+            "prod_read_at": "TEXT",
+        },
+        # Package 3a: which build produced a run.
+        "runs": {
+            "code_version": "TEXT",
+            "config_version": "TEXT",
+            "model_versions": "TEXT",
+            "fee_schedule_version": "TEXT",
         },
         # Package 2: which opportunity an execution and each of its legs -
         # and later the exits and settlements of that position - belong to.
@@ -708,7 +762,10 @@ class Journal:
                         traded: bool = False,
                         provenance: list[int] | None = None,
                         model: str | None = None,
-                        alt_probability: float | None = None) -> None:
+                        alt_probability: float | None = None,
+                        prod_yes_ask_cents: float | None = None,
+                        prod_yes_bid_cents: float | None = None,
+                        prod_read_at: str | None = None) -> None:
         """Record what we thought, before we know whether it was right.
 
         Written for every market an estimator prices - traded or not. Scoring
@@ -721,8 +778,9 @@ class Journal:
                    (ts, strategy, estimator, series, ticker, target_date, strike,
                     our_probability, confidence, market_yes_cents,
                     market_yes_bid_cents, lead_hours, traded, provenance,
-                    model, alt_probability)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    model, alt_probability, prod_yes_ask_cents,
+                    prod_yes_bid_cents, prod_read_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (_now(), strategy, estimator, series, ticker, target_date, strike,
                  float(our_probability),
                  None if confidence is None else float(confidence),
@@ -731,7 +789,10 @@ class Journal:
                  else float(market_yes_bid_cents),
                  None if lead_hours is None else float(lead_hours),
                  1 if traded else 0, _ids(provenance), model,
-                 None if alt_probability is None else float(alt_probability)),
+                 None if alt_probability is None else float(alt_probability),
+                 None if prod_yes_ask_cents is None else float(prod_yes_ask_cents),
+                 None if prod_yes_bid_cents is None else float(prod_yes_bid_cents),
+                 prod_read_at),
             )
             self.conn.commit()
         except sqlite3.Error as exc:
@@ -1325,11 +1386,49 @@ class Journal:
             "legs_partial": one("SELECT COUNT(*) FROM leg_orders WHERE state='PARTIALLY_FILLED'"),
         }
 
-    def start_run(self, mode: str, note: str = "") -> int:
+    def start_run(self, mode: str, note: str = "", *, code_version: str = "",
+                  config_version: str = "", model_versions: dict | None = None,
+                  fee_schedule_version: str = "") -> int:
         cur = self.conn.execute(
-            "INSERT INTO runs (started_ts, mode, note) VALUES (?,?,?)", (_now(), mode, note))
+            "INSERT INTO runs (started_ts, mode, note, code_version, config_version, "
+            "model_versions, fee_schedule_version) VALUES (?,?,?,?,?,?,?)",
+            (_now(), mode, note, code_version, config_version,
+             json.dumps(model_versions or {}, sort_keys=True), fee_schedule_version))
         self.conn.commit()
         return int(cur.lastrowid)
+
+    # ---------------- maker shadow (package C2, phase M0) ----------------
+    _MAKER_COLUMNS = (
+        "created_at", "ticker", "series", "side", "probability_yes", "fair_cents",
+        "stage", "reason", "lead_hours", "book_age_s", "best_bid", "best_ask",
+        "price_cents", "contracts", "queue_ahead", "maker_fee_cents",
+        "taker_fee_cents", "expires_at", "state", "filled", "first_fill_at",
+        "full_fill_at", "fill_kind", "drift_5m", "drift_30m", "drift_60m",
+        "closed_at", "settled_yes", "maker_markout_cents", "taker_markout_cents",
+        "code_version", "config_version")
+
+    def maker_shadow_insert(self, row: dict) -> int:
+        cols = [c for c in self._MAKER_COLUMNS if c in row]
+        cur = self.conn.execute(
+            f"INSERT INTO maker_shadow ({', '.join(cols)}) VALUES "
+            f"({', '.join('?' for _ in cols)})", [row[c] for c in cols])
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def maker_shadow_update(self, row_id: int, fields: dict) -> None:
+        cols = [c for c in fields if c in self._MAKER_COLUMNS]
+        if not cols:
+            return
+        self.conn.execute(
+            f"UPDATE maker_shadow SET {', '.join(c + '=?' for c in cols)} WHERE id=?",
+            [fields[c] for c in cols] + [row_id])
+        self.conn.commit()
+
+    def maker_shadow_rows(self, where: str = "1=1", args: tuple = (),
+                          limit: int = 5000) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            f"SELECT * FROM maker_shadow WHERE {where} ORDER BY id LIMIT ?",
+            (*args, limit))]
 
     def end_run(self, run_id: int) -> None:
         self.conn.execute("UPDATE runs SET ended_ts=? WHERE id=?", (_now(), run_id))
@@ -1564,6 +1663,7 @@ _WRITERS = ("log_decision", "log_trade", "close_open_trades", "close_trade",
             "log_scan", "log_opportunity", "log_trade_result", "start_run", "end_run",
             "log_source_observation", "log_data_check", "save_source_health",
             "record_settlement_sources", "ledger_record", "ledger_decide",
-            "set_outcome", "prune_ledger_records")
+            "set_outcome", "prune_ledger_records", "maker_shadow_insert",
+            "maker_shadow_update")
 for _name in _WRITERS:
     setattr(Journal, _name, _locked(getattr(Journal, _name)))

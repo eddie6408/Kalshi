@@ -131,22 +131,49 @@ def market_probability(ask, bid) -> float | None:
     return float(ask) / 100.0
 
 
-def fetch_rows(conn, estimator: str | None = None, since: str = "") -> list[dict]:
+#: Package 3a. Which market the model is compared with: the demo book it
+#: trades against (what the gate uses), or the production book for the same
+#: ticker at about the same moment (reported beside it until the operator
+#: decides, from the numbers, which one the gate should use).
+BENCHMARK_COLUMNS = {
+    "demo": ("market_yes_cents", "market_yes_bid_cents"),
+    "production": ("prod_yes_ask_cents", "prod_yes_bid_cents"),
+}
+
+
+def fetch_rows(conn, estimator: str | None = None, since: str = "",
+               benchmark: str = "demo") -> list[dict]:
     """Settled forecasts that have a market price to compare against."""
-    where = ["settled_yes IS NOT NULL", "market_yes_cents IS NOT NULL",
+    ask_col, bid_col = BENCHMARK_COLUMNS[benchmark]
+    where = ["settled_yes IS NOT NULL", f"{ask_col} IS NOT NULL",
              "lead_hours IS NOT NULL"]
     args: list = []
     if estimator:
         where.append("estimator = ?"); args.append(estimator)
     if since:
         where.append("ts >= ?"); args.append(since)
+    # Whichever benchmark was asked for is returned under the demo column
+    # names, so everything downstream reads one shape.
     sql = ("SELECT series, ticker, lead_hours, our_probability, settled_yes, "
-           "market_yes_cents, market_yes_bid_cents FROM probability_log WHERE "
-           + " AND ".join(where))
+           f"{ask_col} AS market_yes_cents, {bid_col} AS market_yes_bid_cents "
+           "FROM probability_log WHERE " + " AND ".join(where))
     out = []
     for r in conn.execute(sql, args):
         r = dict(r) if not isinstance(r, dict) else r
         out.append(r)
+    return out
+
+
+def compare_benchmarks(conn, estimator: str | None = None, since: str = "",
+                       cfg: "MarketSkillConfig | None" = None) -> dict[str, dict]:
+    """Both benchmarks side by side, for reports. Never used by the gate."""
+    out = {}
+    for name in BENCHMARK_COLUMNS:
+        try:
+            out[name] = compute_cells(fetch_rows(conn, estimator, since, name), cfg)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("MARKET SKILL  %s benchmark unavailable: %s", name, exc)
+            out[name] = {}
     return out
 
 

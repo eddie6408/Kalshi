@@ -1,6 +1,25 @@
 # Package C2 — Maker orders (post, wait, manage) instead of crossing the spread
 
-**Status: STAGED — not implemented.** Do not start until the operator gives the
+**Status: M0 LIVE since 2026-09-28** (operator: "execute"). M0 = simulation
+only, no orders; it runs 1-2 weeks, then `scripts/maker_report.py` decides
+whether M1-M3 (real resting orders on demo) are worth building. M1-M3 are
+NOT started.
+
+M0 as built: `kalshibot/maker_shadow.py`, a listener on the Package 3a
+production watch; table `maker_shadow`; config `maker_shadow:`. Choices made
+at build time: one simulated order per market at a time, posted once and not
+re-priced, 10 contracts, rests <= 15 min (and never within 30 min of close);
+fills from production prints (through our price = fill; at our price = after
+the displayed queue ahead; queue cancellations ignored, so fills are if
+anything understated); drift at 5/30/60 min from the production book history;
+settlement markout for the maker fill and for crossing at the ask instead.
+Orders resting at a restart are closed as INTERRUPTED and excluded. Posted
+for markets up to 24 h lead (report splits <= 6 h, where the strategy
+trades). Open question 1 answered in part: the weather series are
+`fee_type: quadratic` on production (not the maker-fee variant), so the
+configured maker_rate over-states the cost; P8 (fee engine) settles it.
+
+Original staging note: do not start until the operator gives the
 signal ("execute C2" or similar). Analysis done 2026-09-27 against commit
 `e9f4a83` on the droplet (`/opt/kalshi/trading/kalshi-bot`).
 

@@ -335,13 +335,23 @@ def _market_skill(conn) -> dict:
             raw = yaml.load(fh, Loader=_StrictLoader) or {}
         cfg = MarketSkillConfig.from_dict(raw.get("market_skill"))
         cells = compute_cells(fetch_rows(conn, "weather_temperature", cfg.since), cfg)
+        # Package 3a: the same comparison against the PRODUCTION book, shown
+        # beside the demo one. The gate still decides on demo prices.
+        try:
+            prod = compute_cells(fetch_rows(conn, "weather_temperature", cfg.since,
+                                            benchmark="production"), cfg)
+        except Exception:  # noqa: BLE001
+            prod = {}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc), "cells": []}
     order = {name: i for i, (_lo, _hi, name) in enumerate(BUCKETS)}
     rows = [{"series": c.series, "bucket": c.bucket, "verdict": c.verdict,
              "ours": c.our_brier, "market": c.market_brier, "diff": c.diff,
              "z": c.zscore, "contracts": c.contracts, "rows": c.rows,
-             "mid_share": c.mid_share}
+             "mid_share": c.mid_share,
+             "prod": ({"verdict": p.verdict, "diff": p.diff, "z": p.zscore,
+                       "contracts": p.contracts}
+                      if (p := prod.get((c.series, c.bucket))) else None)}
             for c in cells.values()]
     rows.sort(key=lambda r: (order.get(r["bucket"], 9), r["series"] != "ALL", r["series"]))
     return {"require": cfg.require, "since": cfg.since,

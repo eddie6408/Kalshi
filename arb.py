@@ -32,7 +32,11 @@ from kalshibot.env_guard import (ProductionBlocked, assert_demo_environment,
 from kalshibot.fees import FeeModel
 from kalshibot.forecast_scoring import score_pending
 from kalshibot.journal import Journal
+from kalshibot.maker_shadow import MakerShadow, MakerShadowConfig
 from kalshibot.market_state import MarketState
+from kalshibot.prodwatch import ProductionWatch, WatchConfig
+from kalshibot.recorder import Recorder, RecorderConfig
+from kalshibot.versioning import versions
 from kalshibot.sources import (MONITOR, OFF, DOWN, HEALTHY, SourceConfigError,
                                configure_from_settings, nws_user_agent)
 from kalshibot.alerts import ALERTS, today_key
@@ -411,6 +415,20 @@ def main() -> int:
     feed_cfg = FeedConfig.from_dict(settings.section("feed"))
     feed = KalshiFeed(state, signer, feed_cfg, env=settings.kalshi_env)
 
+    # ---- package 3a: keep the market data, instead of throwing it away --
+    # Append-only tick files outside the journal. Recording can stop (disk
+    # low, write error); trading never waits on it.
+    rec_cfg = RecorderConfig.from_dict(settings.section("recorder"))
+    recorder = Recorder(
+        settings.path("recorder.directory", "data/ticks"), rec_cfg,
+        alert=lambda msg: ALERTS.send(today_key("recorder", "disk"),
+                                      "Market-data recorder stopped", msg,
+                                      priority="default", tags="floppy_disk"))
+    if rec_cfg.enabled:
+        recorder.start()
+        feed.recorder = recorder
+        print(f"{D}  recording market data to {recorder.root}{X}")
+
     def _feed_probe():
         if not feed_cfg.enabled:
             return OFF, "feed disabled; books read over REST"
@@ -460,7 +478,45 @@ def main() -> int:
               f"{worker.cfg.review_interval_seconds:.0f}s alongside the scan "
               f"({how}){X}")
 
-    run_id = journal.start_run(mode.value, note=f"env={settings.kalshi_env}")
+    try:
+        from kalshibot.estimators.weather import MODEL_VERSIONS as _weather_models
+    except Exception:  # noqa: BLE001
+        _weather_models = {}
+    run_versions = versions()
+    run_id = journal.start_run(
+        mode.value, note=f"env={settings.kalshi_env}",
+        code_version=run_versions["code_version"],
+        config_version=run_versions["config_version"],
+        model_versions={s.name: (_weather_models if s.name.startswith("weather") else {})
+                        for s in engine.forecasts},
+        fee_schedule_version=fees.version)
+    log.info("RUN  %d: code %s, config %s", run_id, run_versions["code_version"],
+             run_versions["config_version"])
+
+    # ---- package 3a + C2 M0: the same markets, on production -----------
+    # Public data, read only, on its own worker and request budget; the
+    # forecast strategy only ever reads what it has already fetched.
+    watch_cfg = WatchConfig.from_dict(settings.section("production_watch"))
+    prod_watch = None
+    maker_shadow = None
+    if watch_cfg.enabled and engine.forecasts:
+        from kalshibot.livebooks import LiveBookReader
+        prod_watch = ProductionWatch(LiveBookReader(),
+                                     recorder if rec_cfg.enabled else None, watch_cfg)
+        for strategy in engine.forecasts:
+            strategy.production_watch = prod_watch
+            if rec_cfg.enabled:
+                strategy.recorder = recorder
+        ms_cfg = MakerShadowConfig.from_dict(settings.section("maker_shadow"))
+        if ms_cfg.enabled:
+            maker_shadow = MakerShadow(journal, fees, ms_cfg, watch=prod_watch,
+                                       versions=run_versions)
+            maker_shadow.load()
+            prod_watch.listeners.append(maker_shadow)
+        print(f"{D}  production watch: books every {watch_cfg.book_interval_seconds:.0f}s, "
+              f"prints every {watch_cfg.trades_interval_seconds:.0f}s, "
+              f"<= {watch_cfg.max_requests_per_second:g} req/s (read only)"
+              f"{'; maker shadow on (no orders)' if maker_shadow else ''}{X}")
     interval = int(settings.get("arb_loop.scan_interval_seconds", 60))
     closed_interval = int(settings.get("arb_loop.closed_check_seconds", 900))
 
@@ -522,6 +578,11 @@ def main() -> int:
         WorkerConfig.from_dict("arbitrage", workers_cfg.get("arbitrage"),
                                float(max(interval, 900))),
         arbitrage_pass, should_run=_open_now))
+    if prod_watch is not None:
+        supervisor.add(Worker(
+            WorkerConfig.from_dict("production_watch",
+                                   workers_cfg.get("production_watch"), 15.0),
+            prod_watch.run_pass))
 
     # Execution quality: what would this order cost on a REAL book?
     #
@@ -614,6 +675,14 @@ def main() -> int:
                     retention_days=int(settings.get("journal.ledger_retention_days", 90)))
             except Exception as exc:  # noqa: BLE001
                 log.error("LEDGER  outcome pass failed: %s", exc)
+            # C2 M0: what did the simulated maker orders' contracts pay?
+            if maker_shadow is not None:
+                try:
+                    maker_shadow.resolve(series_client)
+                except Exception as exc:  # noqa: BLE001
+                    log.error("MAKER SHADOW  settlement pass failed: %s", exc)
+            if rec_cfg.enabled:
+                recorder.prune()
             if updated:
                 log.info("SCORING  filled %d forecast rows from %d "
                          "station-days", updated, looked_up)
@@ -665,6 +734,12 @@ def main() -> int:
                     log.info("MARKET STATE  %s | feed %s", state.stats.summary(),
                              feed.stats.summary() if feed_cfg.enabled else "off")
                     log.info("SOURCES  %s", MONITOR.summary())
+                    if rec_cfg.enabled:
+                        log.info("RECORDER  %s", recorder.summary())
+                    if prod_watch is not None:
+                        log.info("PRODWATCH  %s%s", prod_watch.summary(),
+                                 f" | maker shadow {maker_shadow.summary()}"
+                                 if maker_shadow else "")
                     # The balance, from the exchange, for the watch screen.
                     if portfolio is not None:
                         try:
@@ -700,6 +775,7 @@ def main() -> int:
             position_thread.join(timeout=5)
         if feed_thread is not None:
             feed_thread.join(timeout=5)
+        recorder.stop()
         journal.end_run(run_id)
 
     s = journal.arbitrage_summary()

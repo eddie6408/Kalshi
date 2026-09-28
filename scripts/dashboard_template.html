@@ -653,6 +653,7 @@ function renderMarketSkill(){
       <th>Lead</th><th>City</th><th>Verdict</th><th class="num">Ours</th>
       <th class="num">Market</th><th class="num">Gap</th><th class="num">z</th>
       <th class="num">Contracts</th><th class="num">True mid</th>
+      <th>vs real exchange</th><th class="num">Gap</th><th class="num">Contracts</th>
     </tr></thead><tbody>${rows.map(r => `<tr${r.series === "ALL" ? ' style="font-weight:600"' : ""}>
       <td>${esc(r.bucket)}</td><td class="t">${esc(r.series)}</td>
       <td class="${cls(r.verdict)}"><b>${esc(r.verdict)}</b></td>
@@ -660,9 +661,15 @@ function renderMarketSkill(){
       <td class="num ${r.diff > 0 ? "neg" : "pos"}">${r.diff > 0 ? "+" : ""}${r.diff.toFixed(3)}</td>
       <td class="num">${r.z == null ? "&mdash;" : (r.z > 0 ? "+" : "") + r.z.toFixed(1)}</td>
       <td class="num">${r.contracts}</td>
-      <td class="num">${Math.round(r.mid_share * 100)}%</td></tr>`).join("")}</tbody></table>
+      <td class="num">${Math.round(r.mid_share * 100)}%</td>
+      ${r.prod ? `<td class="${cls(r.prod.verdict)}">${esc(r.prod.verdict)}</td>
+      <td class="num ${r.prod.diff > 0 ? "neg" : "pos"}">${r.prod.diff > 0 ? "+" : ""}${r.prod.diff.toFixed(3)}</td>
+      <td class="num">${r.prod.contracts}</td>` : `<td class="sub">not yet</td><td></td><td></td>`}</tr>`).join("")}</tbody></table>
     <p class="chart-note" style="margin:10px 0 0">Gap &gt; 0: the market was closer to the
-    outcome than we were. z is the gap in standard errors across contracts.</p>`;
+    outcome than we were. z is the gap in standard errors across contracts.
+    <b>vs real exchange</b>: the same comparison against the production book for the same
+    contract (recorded since Package 3a). Shown for information; the gate decides on the
+    demo columns until the operator switches it.</p>`;
 }
 
 // ------------------------------------------------------- sources (14A)

@@ -46,7 +46,9 @@ def test_the_shipped_gate_config_enforces_only_the_hard_cap():
     raw = yaml.load(open(ROOT / "config.yaml"), Loader=_StrictLoader)
     g = GateConfig.from_dict(raw["sources"]["gates"])
     assert g.conflict_hard_cap_f == 5.0
-    assert g.conflict_threshold_f is None          # not fitted yet
+    # First fit 2026-09-28 (3.0F), set in SHADOW only: it must not block a
+    # trade until the operator switches conflict_mode to enforce.
+    assert g.conflict_threshold_f is None or 2.0 <= g.conflict_threshold_f < 5.0
     assert (g.conflict_mode, g.source_down_mode, g.stale_mode, g.obs_qc_mode) == \
         ("shadow", "shadow", "shadow", "shadow")
     assert raw["sources"]["nws_contact"]

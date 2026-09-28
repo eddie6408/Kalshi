@@ -44,6 +44,7 @@ from ..depth import DepthBook
 from ..edge import contracts_from_kelly, evaluate
 from ..fees import FeeModel
 from ..models import Market
+from ..recorder import book_levels
 from ..opportunity import (RISK_SCORE, ArbitrageOpportunity, ExecutionRisk, Leg,
                            OpportunityClass)
 
@@ -215,6 +216,12 @@ class ForecastStrategy:
         #: most of the data.
         self.journal = journal
         self._logged: set[tuple] = set()
+        #: Package 3a, set by arb.py. The recorder keeps the demo book each
+        #: market was priced against; the production watch reads the same
+        #: market on production (off the trading path) and hands back its
+        #: latest book for the benchmark. None = off.
+        self.recorder = None
+        self.production_watch = None
 
     @property
     def name(self) -> str:
@@ -254,9 +261,57 @@ class ForecastStrategy:
                                  cached.get(m.ticker))
             self._record(m, cached.get(m.ticker), books[m.ticker],
                          traded=op is not None)
+            self._observe(m, books[m.ticker], op)
             if op is not None:
                 out.append(op)
         return out
+
+    def _prod_quote(self, ticker: str):
+        """The production book for this market if one was read in the last
+        five minutes, else None. Never makes a request."""
+        if self.production_watch is None:
+            return None
+        try:
+            return self.production_watch.latest(ticker, max_age=300.0)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _observe(self, m: Market, book: DepthBook, op) -> None:
+        """Package 3a: record the demo book this market was priced against,
+        and ask for the same market to be watched on production - with our
+        verdict, for the maker shadow (C2 M0). Never blocks, never raises."""
+        try:
+            if self.recorder is not None:
+                self.recorder.record("demo_book", {"m": m.ticker, "src": self.name,
+                                                   "b": book_levels(book)})
+            if self.production_watch is None:
+                return
+            ctx = self._ctx if self._ctx.get("ticker") == m.ticker else {}
+            est = ctx.get("estimate")
+            info = None
+            if est is not None and getattr(est, "usable", False):
+                ev = est.evidence or {}
+                if op is not None:
+                    stage, reason = "ACCEPTED", ""
+                else:
+                    last = (self.skips[-1] if self.skips
+                            and self.skips[-1].ticker == m.ticker else None)
+                    reason = last.reason if last else ""
+                    st = _ledger.stage_for(reason) if reason else None
+                    stage = st.value if st else ("UNMAPPED" if reason else "")
+                info = {"q": est.probability_yes, "stage": stage, "reason": reason,
+                        "lead": ev.get("lead_hours"),
+                        "series": m.series_ticker or m.ticker.split("-")[0],
+                        "close_ts": m.close_time.timestamp() if m.close_time else None}
+            self.production_watch.watch(m.ticker, info)
+            if op is not None:
+                q = self._prod_quote(m.ticker)
+                if q is not None:
+                    op.evidence = dict(op.evidence or {},
+                                       prod_touch={"yes_ask": q.yes_ask,
+                                                   "yes_bid": q.yes_bid})
+        except Exception as exc:  # noqa: BLE001
+            log.debug("could not observe %s: %s", m.ticker, exc)
 
     def _record(self, m: Market, estimate, book: DepthBook, traded: bool) -> None:
         """Write down what we thought, before anyone knows if it was right.
@@ -280,6 +335,8 @@ class ForecastStrategy:
         # audit needs both numbers to compute it.
         yes_ask = book.best_price("yes", "buy") if book else None
         yes_bid = book.best_price("yes", "sell") if book else None
+        # Package 3a: the same market on production, for the second benchmark.
+        prod = self._prod_quote(m.ticker)
         try:
             self.journal.log_probability(
                 strategy=f"forecast:{self.name}", estimator=self.name,
@@ -295,6 +352,10 @@ class ForecastStrategy:
                 provenance=ev.get("provenance_ids"),
                 model=ev.get("model"),
                 alt_probability=ev.get("alt_probability"),
+                prod_yes_ask_cents=prod.yes_ask if prod else None,
+                prod_yes_bid_cents=prod.yes_bid if prod else None,
+                prod_read_at=(datetime.fromtimestamp(prod.read_at, timezone.utc).isoformat()
+                              if prod else None),
             )
             # The distribution behind the probability, for the second kind of
             # scoring: was the mean right, was sigma wide enough.
@@ -388,6 +449,9 @@ class ForecastStrategy:
                 for side in ("yes", "no"):
                     touch[f"{side}_ask"] = book.best_price(side, "buy")
                     touch[f"{side}_bid"] = book.best_price(side, "sell")
+            prod = self._prod_quote(m.ticker)
+            if prod is not None:
+                touch["prod_yes_ask"], touch["prod_yes_bid"] = prod.yes_ask, prod.yes_bid
             usable = est is not None and getattr(est, "usable", False)
             ev = (est.evidence or {}) if usable else {}
             stub = ArbitrageOpportunity.stub(

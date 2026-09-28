@@ -119,6 +119,28 @@ class LiveBookReader:
     def market(self, ticker: str) -> dict:
         return (self._get(f"/markets/{ticker}").get("market") or {})
 
+    def trades(self, ticker: str, min_ts: int | None = None, limit: int = 1000,
+               max_pages: int = 5) -> list[dict]:
+        """Public trade prints for one market, oldest pages last (as served).
+
+        Package 3a / C2 M0: `taker_side` on each print says which side the
+        aggressor bought - exactly what a resting-order simulation needs.
+        Raises on a failed request so the caller can tell "no trades" from
+        "could not ask".
+        """
+        params: dict = {"ticker": ticker, "limit": limit}
+        if min_ts is not None:
+            params["min_ts"] = int(min_ts)
+        out: list[dict] = []
+        for _ in range(max_pages):
+            payload = self._get("/markets/trades", params)
+            out.extend(payload.get("trades") or [])
+            cursor = payload.get("cursor")
+            if not cursor or len(payload.get("trades") or []) < limit:
+                break
+            params["cursor"] = cursor
+        return out
+
     def ping(self) -> bool:
         """Is the live market data reachable? Used at startup, not per pass."""
         try:

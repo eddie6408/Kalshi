@@ -1,6 +1,9 @@
 # Package 3a — Market-data recorder, production prices beside forecasts, run versions
 
-**Status: PROPOSED — not implemented.** Awaiting operator approval.
+**Status: APPROVED 2026-09-28 and IMPLEMENTED** (with C2 phase M0, which
+shares the production watch). Operator decisions: (1) approved as scoped;
+(2) record both benchmarks, the gate stays on demo prices until ~2 weeks of
+production-benchmarked settlements exist; (3) tick retention 90 days.
 Written 2026-09-27 against commit `a0929e9` (Packages 1-2 live).
 Scope: the existing weather + arbitrage bot only. The reactive-strategy plan
 (`docs/audit/2026-09-27-reactive-strategy-audit.md`) is **on hold**; nothing
@@ -61,7 +64,11 @@ given, source, ticker, and the payload replay needs:
 - Budget and back-off: a shared token bucket for production reads (default
   2 req/s, far under published limits); on 429 it backs off and skips, never
   retries in a loop.
-- Size: estimated 10-30 MB/day compressed (measured on day 1; 69 GB free).
+- Size: books and trades are small (~10-30 MB/day compressed). The demo
+  feed is not: it carries ~80 messages/s (every market the feed follows),
+  estimated ~60-150 MB/day compressed - measured on day 1 and reported by
+  `tape_report.py`; `recorder.demo_ws: false` keeps only books and trades.
+  69 GB free.
   Retention `recorder.retention_days: 90`; recording stops (trading does not)
   if free space falls under 5 GB.
 - `scripts/tape_report.py`: per series and day — updates, trades, volume,
@@ -108,3 +115,21 @@ merge (the deploy gate), concurrency tests stress-run there.
    ~2 weeks of production-benchmarked settlements exist, then decide from
    the numbers (recommended) — or switch the gate to production now.
 3. Tick retention: 90 days (recommended; matches the ledger).
+
+## 7. As built (2026-09-28)
+
+- `kalshibot/recorder.py` (tick files), `kalshibot/prodwatch.py` (production
+  books + prints for the markets the forecast strategy priced; worker
+  `production_watch`, 15 s tick, books every 120 s, prints every 300 s,
+  <= 2 req/s, back-off on 429), `LiveBookReader.trades()` (GET
+  `/markets/trades`, already inside the public allowlist - env_guard
+  unchanged).
+- `probability_log.prod_yes_ask_cents / prod_yes_bid_cents / prod_read_at`;
+  ledger stub touches carry `prod_yes_ask/bid`; accepted opportunities carry
+  `evidence.prod_touch`.
+- `market_skill.fetch_rows(..., benchmark="production")` and
+  `compare_benchmarks()`; dashboard "vs real exchange" columns. The gate
+  (`MarketSkillGate`) is unchanged and decides on demo prices.
+- `runs.code_version / config_version / model_versions / fee_schedule_version`.
+- `scripts/tape_report.py`; heartbeat lines `RECORDER` and `PRODWATCH`.
+- Tests: `tests/test_market_data_recorder.py`.

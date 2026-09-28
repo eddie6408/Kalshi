@@ -740,6 +740,48 @@ feed:
   # working set - at most this often, since it costs a reconnect.
   rollover_seconds: 3600
 
+# Package 3a (approved 2026-09-28): keep the market data the bot sees.
+# Append-only gzip JSON lines per source per UTC day, outside the journal:
+# demo feed snapshots/deltas, the demo book each forecast was priced on, and
+# the PRODUCTION book and trade prints for the same markets. Replay (3b) and
+# the fill model need this history, and it only accumulates forward.
+# Recording stops (with one alert) below min_free_gb; trading never does.
+recorder:
+  enabled: true
+  directory: data/ticks
+  retention_days: 90        # approved; matches the opportunity ledger
+  min_free_gb: 5
+  demo_ws: true             # the bulk of the volume; false keeps only books/trades
+  flush_seconds: 5
+
+# Package 3a: the same weather markets on PRODUCTION, read with no credential
+# (public market data, GET only, allowlisted - kalshibot/livebooks.py). Its
+# own worker and budget; the strategy only reads what was already fetched.
+# Feeds the second market-skill benchmark (report only - the gate still
+# decides on demo prices) and the maker shadow below.
+production_watch:
+  enabled: true
+  book_interval_seconds: 120
+  trades_interval_seconds: 300
+  max_requests_per_second: 2   # the live-volatility bot uses up to 6 on the same IP
+  forget_after_minutes: 30
+
+# Package C2, phase M0 (approved 2026-09-28): SIMULATED resting orders for the
+# entries the forecast strategy priced, checked against the production trade
+# tape. NO ORDERS: rows in maker_shadow, report scripts/maker_report.py. Runs
+# 1-2 weeks before any real maker order (M1-M3) is built.
+# Fee note: the weather series are fee_type "quadratic" on production (the
+# variant without maker fees), so maker_rate 0.0025 below over-states the cost.
+maker_shadow:
+  enabled: true
+  contracts: 10
+  improve_cents: 1
+  min_edge_cents: 3
+  max_rest_seconds: 900
+  close_within_minutes: 30
+  max_lead_hours: 24        # wider than the strategy's 6h, to measure sooner
+  drift_minutes: [5, 30, 60]
+
 # How the work is divided. Each worker runs on its OWN clock, in this one
 # process, so a strategy that needs six series does not wait on one that needs
 # the whole exchange.
@@ -886,9 +928,12 @@ sources:
     # A forecast gap this large is a broken or stale source, not an opinion.
     # ENFORCED from day one; normal ensemble-vs-NWS gaps run 1-2.5F.
     conflict_hard_cap_f: 5.0
-    # The fitted threshold. Blank until fitted from 5-7 days of data_checks
-    # by scripts/fit_conflict_threshold.py and approved by the operator.
-    conflict_threshold_f:
+    # The fitted threshold (scripts/fit_conflict_threshold.py). First fit
+    # 2026-09-28: 18 city-days (25-27 Sep), median gap 1.44F, p95 2.84F ->
+    # 3.0F. Would have blocked 1 city-day and 0 trades. Set IN SHADOW only:
+    # under 20 city-days the percentile is mostly noise. Re-fit ~30 Sep and
+    # enforce only on the operator's approval.
+    conflict_threshold_f: 3.0
     conflict_mode: shadow
     # A source the strategy requires (sources.registry.*.required_by) is DOWN.
     source_down_mode: shadow

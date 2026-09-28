@@ -178,6 +178,23 @@ def render(conn, db: Path, rows: int) -> str:
             out.append(f"{D}    rejected by stage: " + "  ".join(
                 f"{k or '?'} {v}" for k, v in sorted(stages.items(), key=lambda x: -x[1])) + X)
 
+    # ---------------- maker shadow (package C2, phase M0) ----------------
+    # Simulated resting orders on the production tape. No orders are sent.
+    if _table(conn, "maker_shadow"):
+        start = datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0).timestamp()
+        ms = conn.execute(
+            "SELECT state, COUNT(*) n, SUM(filled > 0) f FROM maker_shadow "
+            "WHERE created_at >= ? GROUP BY state", (start,)).fetchall()
+        if ms:
+            by = {r["state"]: (r["n"], r["f"] or 0) for r in ms}
+            closed = sum(by.get(s, (0, 0))[0] for s in ("FILLED", "PARTIAL", "EXPIRED"))
+            got = sum(by.get(s, (0, 0))[1] for s in ("FILLED", "PARTIAL"))
+            out.append(f"  {B}MAKER SHADOW{X} {D}today, simulated - no orders{X}  "
+                       f"posted {sum(v[0] for v in by.values())}  resting "
+                       f"{by.get('OPEN', (0, 0))[0]}  filled {got} of {closed} closed"
+                       + (f" ({got / closed:.0%})" if closed else ""))
+
     # ---------------- sources (package 14A) ----------------
     # Where the outside information comes from and whether it is working.
     # Written by the bot every heartbeat; blank on a journal from before 14A.
