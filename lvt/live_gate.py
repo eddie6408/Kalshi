@@ -35,7 +35,7 @@ SELFTEST_ITEMS = {
     "RISK_CONTROLS_VALIDATED": ["tests.test_risk", "tests.test_kill_switch"],
     "RECONCILIATION_VALIDATED": ["tests.test_reconcile"],
     "DUPLICATE_ORDER_PROTECTION_TESTED": ["tests.test_order_manager"],
-    "PARTIAL_FILL_HANDLING_TESTED": ["tests.test_fill_model", "tests.test_positions"],
+    "PARTIAL_FILL_HANDLING_TESTED": ["tests.test_fill_model", "tests.test_positions", "tests.test_maker"],
     "RESTART_RECOVERY_TESTED": ["tests.test_restart"],
 }
 

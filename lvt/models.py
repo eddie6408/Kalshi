@@ -15,6 +15,7 @@ Price conventions (read this before touching anything that trades):
 """
 from __future__ import annotations
 
+import random
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -28,8 +29,21 @@ def other(side: str) -> str:
     return NO if side == YES else YES
 
 
+_id_rng: random.Random | None = None
+
+
 def new_id(prefix: str) -> str:
+    if _id_rng is not None:
+        return f"{prefix}-{_id_rng.getrandbits(64):016x}"
     return f"{prefix}-{uuid.uuid4().hex[:16]}"
+
+
+def deterministic_ids(seed) -> None:
+    """Replay only: ids (and therefore the per-order latency and touch-miss
+    draws seeded from them) come from a seeded generator so the same replay
+    always gives the same result. None restores random ids."""
+    global _id_rng
+    _id_rng = None if seed is None else random.Random(seed)
 
 
 def dollars_to_cents(v) -> Optional[float]:

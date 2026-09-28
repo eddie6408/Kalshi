@@ -35,7 +35,7 @@ from lvt.db import Database, open_state_db
 from lvt.engine.trader import Engine
 from lvt.execution.paper import PaperVenue
 from lvt.labeler import label_signals
-from lvt.models import FillEvent
+from lvt.models import FillEvent, deterministic_ids
 from lvt.fees import fee_usd
 from lvt.reports import closed, metrics
 from lvt.tape import iter_snapshots, load_markets, load_trades
@@ -56,6 +56,9 @@ def run_replay(cfg: Config, tape: Database, start: float, end: float, out_dir: P
     run_id = f"bt-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     out_dir.mkdir(parents=True, exist_ok=True)
     db_path = out_dir / f"{run_id}.db"
+    # same data + same config -> same order ids -> same simulated latency and
+    # queue-miss draws -> identical results
+    deterministic_ids(f"{start:.0f}:{end:.0f}:{cfg.config_hash()}")
     db = open_state_db(db_path)
     markets = load_markets(tape)
     clock = ReplayClock(start)
@@ -97,6 +100,7 @@ def run_replay(cfg: Config, tape: Database, start: float, end: float, out_dir: P
             engine.book.entry_finished(p, clock.now(), "END_OF_DATA")
     if label:
         label_signals(db, tape, cfg, end + 10_000, limit=1_000_000)
+    deterministic_ids(None)
     rows = closed(db, "BACKTEST")
     m = metrics(rows, cfg.risk.paper_starting_equity)
     m.update({"end_of_data_closes": eod, "steps": steps, "wall_s": round(time.time() - t_wall, 1),

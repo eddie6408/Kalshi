@@ -67,6 +67,17 @@ class TestTape(unittest.TestCase):
 
 
 class TestReplay(unittest.TestCase):
+    def test_deterministic_with_production_randomness(self):
+        # real latency jitter and touch-miss probability: ids must be seeded
+        tmp, tape, m = build_tape(repeat=4)
+        c = cfg({**only("DIP"), "execution": {"touch_miss_probability": 0.3, "latency_jitter_ms": 150.0}})
+        runs = [run_replay(c, tape, 0, 1e12, tmp / "bt", label=False)["metrics"] for _ in range(3)]
+        for r in runs[1:]:
+            for k in ("trades", "net_pnl_usd", "missed_entries", "win_rate"):
+                self.assertEqual(runs[0][k], r[k], k)
+        from lvt.models import new_id
+        self.assertNotEqual(new_id("x"), new_id("x"))                  # live ids are random again
+
     def test_backtest_trades_and_is_deterministic(self):
         tmp, tape, m = build_tape(repeat=3)
         c = cfg(only("DIP"))
