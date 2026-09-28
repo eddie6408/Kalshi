@@ -47,6 +47,8 @@ BIG = merge({"strategies": {"DIP": {"min_drop_cents": 12.0}, "REVERSAL": {"min_d
                             "MOMENTUM": {"min_rise_cents": 8.0, "min_velocity": 3.0},
                             "DOWNTREND": {"min_rise_cents": 8.0, "min_velocity": 3.0}}})
 COOL = {"signals": {"market_cooldown_after_stop_s": 1800}}
+TAKER = {"execution": {"entry_style": "taker", "exit_style": "taker"}, "maker": {"take_profit": False}}
+MAKER = {"execution": {"entry_style": "maker", "exit_style": "maker"}, "maker": {"take_profit": True}}
 
 VARIANTS: dict[str, dict] = {
     "baseline": {},
@@ -61,6 +63,10 @@ VARIANTS: dict[str, dict] = {
     "volstop_2.5+cap6+cool": merge(VOLSTOP, CAP6, COOL),
     "bigger+volstop_2.5+cap6+cool": merge(BIG, VOLSTOP, CAP6, COOL),
     "bigger+cool": merge(BIG, COOL),
+    # maker execution on the same windows. The 2026-09-27 tape has no trade
+    # prints, so maker fills there use the conservative volume fallback.
+    "maker": MAKER,
+    "maker+volstop_2.5+cap6+cool": merge(MAKER, VOLSTOP, CAP6, COOL),
 }
 
 
@@ -72,7 +78,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--train", nargs=2, default=["2026-09-27T17:12", "2026-09-27T20:29"])
     ap.add_argument("--valid", nargs=2, default=["2026-09-27T20:29", "2026-09-28T04:55"])
-    ap.add_argument("--top", type=int, default=4)
+    ap.add_argument("--top", type=int, default=5)
     ap.add_argument("--only", nargs="*", default=None)
     a = ap.parse_args()
 
@@ -94,7 +100,7 @@ def main() -> int:
     names = a.only or list(VARIANTS)
     results: dict[str, dict] = {}
     for name in names:
-        cfg = load_config(ROOT, overrides=VARIANTS[name])
+        cfg = load_config(ROOT, overrides=merge(TAKER, VARIANTS[name]))
         s = run_replay(cfg, tape, ts(a.train[0]), ts(a.train[1]), bt, "experiment", f"train:{name}", state,
                        VARIANTS[name], label=False)
         results[name] = {"train": s["metrics"]}
@@ -106,7 +112,7 @@ def main() -> int:
                     key=lambda n: -results[n]["train"].get("expectancy_usd", -1e9))
     chosen = list(dict.fromkeys(["baseline"] + ranked[: a.top])) if "baseline" in names else ranked[: a.top]
     for name in chosen:
-        cfg = load_config(ROOT, overrides=VARIANTS[name])
+        cfg = load_config(ROOT, overrides=merge(TAKER, VARIANTS[name]))
         s = run_replay(cfg, tape, ts(a.valid[0]), ts(a.valid[1]), bt, "experiment", f"valid:{name}", state,
                        VARIANTS[name], label=False)
         results[name]["valid"] = s["metrics"]
@@ -123,7 +129,8 @@ def main() -> int:
 
     lines = [f"# Replay experiments {stamp}", "",
              f"TRAIN {a.train[0]} -> {a.train[1]} UTC; VALIDATION {a.valid[0]} -> {a.valid[1]} UTC.",
-             "Replay is ~0.7 $/trade more optimistic than live paper (2026-09-28 fidelity check).", "",
+             "Replay is ~0.7 $/trade more optimistic than live paper (2026-09-28 fidelity check). Replays are",
+             "deterministic (seeded ids); maker rows on this tape use the volume fallback (no trade prints).", "",
              "| variant | train trades | win | exp/trade | net | fees | valid trades | win | exp/trade | net | fees |",
              "|---|---|---|---|---|---|---|---|---|---|---|"]
     for n in names:
