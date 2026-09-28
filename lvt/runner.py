@@ -512,9 +512,30 @@ class LiveRunner:
                     log.info("diagnostics: %s", done)
             except Exception as exc:                          # noqa: BLE001
                 log.warning("labeler failed: %s", exc)
+        if self._due("results", 600, now):
+            self._collect_results(now)
         if self._due("prune", 86400, now):
             n = self.tape.prune(cfg.health.tape_retention_days)
             log.info("tape prune removed %d rows", n)
+
+    def _collect_results(self, now: float, limit: int = 500) -> None:
+        """Outcomes of markets we recorded and that are no longer quoted
+        (V2 brief section 8: calibration needs actual results)."""
+        try:
+            rows = self.tape_db.query(
+                "SELECT m.ticker FROM markets m WHERE m.sport = 'TENNIS' AND NOT EXISTS "
+                "(SELECT 1 FROM market_results r WHERE r.ticker=m.ticker) AND m.last_seen < ? "
+                "AND m.ticker NOT IN (SELECT DISTINCT ticker FROM quotes WHERE ts > ?) LIMIT ?",
+                (now - 600, now - 600, limit))
+            tickers = [r["ticker"] for r in rows]
+            if not tickers:
+                return
+            quotes = self.data_trades.quotes(tickers)
+            n = self.tape.record_results(list(quotes.values()), now)
+            if n:
+                log.info("recorded %d settled market results", n)
+        except Exception as exc:                              # noqa: BLE001
+            log.warning("result collection failed: %s", exc)
 
     def _write_status(self, now: float) -> None:
         e = self.engine

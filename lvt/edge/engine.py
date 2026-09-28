@@ -47,6 +47,7 @@ from lvt.fees import fee_per_contract_cents
 from lvt.models import NO, YES, MarketInfo, Signal, Snapshot, new_id
 
 KINDS = ("DISLOCATION_REVERSAL", "UNFINISHED_MOMENTUM", "FLOW_REVERSAL")
+MODEL_VERSION = "TENNIS_MARKOV_V1"          # reference model; bump when the fair-value model changes
 STRATEGIC_W = {"dislocation": 0.25, "alignment": 0.20, "confirmation": 0.20, "order_flow": 0.10,
                "confidence": 0.15, "remaining_move": 0.10}
 QUALITY_W = {"liquidity": 0.25, "spread": 0.20, "fill_probability": 0.25, "freshness": 0.15, "latency": 0.15}
@@ -100,6 +101,7 @@ class EdgeEngine:
         self.event_seq: dict[str, int] = {}
         self.pending_votes: list[tuple] = []               # (due_ts, ticker, expected, mid_at_event)
         self.recorded_ref: dict[str, tuple[float, float]] = {}
+        self.last_disl: dict[str, tuple[float, float, float]] = {}
         self.no_edge_seen: dict[tuple, float] = {}
         self.fill_prob_cache = (0.0, float(self.e.prior_fill_probability))
         style = cfg.data.get("execution", {})
@@ -183,6 +185,7 @@ class EdgeEngine:
             h = self.ref_hist.setdefault(t, deque(maxlen=2000))
             if not h or abs(h[-1][1] - ref.value) > 1e-6 or now - h[-1][0] > 30:
                 h.append((now, ref.value))
+            self._record_dislocation(t, s, ref, now)
             last = self.recorded_ref.get(t)
             if last is None or abs(last[1] - ref.value) >= 0.5 or now - last[0] >= 60:
                 self.recorded_ref[t] = (now, ref.value)
@@ -201,6 +204,28 @@ class EdgeEngine:
             if mid is not None:
                 self.refs.note_response(t, expected, mid - mid0)
         self.pending_votes = keep
+
+    def _record_dislocation(self, t: str, s: Snapshot, ref, now: float) -> None:
+        mid = s.mid(YES)
+        last = self.last_disl.get(t)
+        if last is not None and abs(last[1] - mid) < 0.5 and abs(last[2] - ref.value) < 0.5 and now - last[0] < 10:
+            return
+        self.last_disl[t] = (now, mid, ref.value)
+        mev = self.match_of(t)
+        ev = self.last_event.get(mev or "", {})
+        fl = self.flow.flow(t, YES, now)
+        tot = s.quote.yes_bid_size + s.quote.yes_ask_size
+        self.db.insert("dislocations", {
+            "ts": now, "env": self.env, "ticker": t, "match_event": mev, "kind": ref.kind,
+            "model_version": MODEL_VERSION, "bid": s.yes_bid, "ask": s.yes_ask, "mid": mid, "spread": s.spread(),
+            "fair": ref.value, "fair_lo": ref.lo, "fair_hi": ref.hi, "confidence": ref.confidence,
+            "gap": round(ref.value - mid, 3), "strength_d": ref.d, "samples": ref.samples, "mapping": ref.mapping,
+            "quote_age_s": round(now - s.ts, 2), "score_age_s": ref.context_age_s,
+            "event_seq": self.event_seq.get(mev or "", 0), "last_event": ev.get("kinds"),
+            "since_event_s": round(now - ev["ts"], 1) if ev else None,
+            "flow_signed_short": fl.signed_short, "flow_signed_long": fl.signed, "flow_shock": fl.shock,
+            "depth_imbalance": round((s.quote.yes_bid_size - s.quote.yes_ask_size) / tot, 3) if tot else None,
+            "liquidity_usd": round(s.liquidity_usd(), 1), "state": ref.state_text})
 
     def _ref_at(self, ticker: str, ts: float) -> Optional[float]:
         h = self.ref_hist.get(ticker)

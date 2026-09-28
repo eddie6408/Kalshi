@@ -50,6 +50,31 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--start")
     p.add_argument("--end")
     p.add_argument("--edge", action="store_true", help="replay EDGE_ENGINE_V1 instead of the baseline")
+    p = sub.add_parser("study", help="V2 empirical studies (read-only)")
+    p.add_argument("name", choices=["gap", "decay", "calibration", "funnel", "baseline"])
+    p.add_argument("--start")
+    p.add_argument("--end")
+    p.add_argument("--env", default="PAPER_EDGE")
+    p.add_argument("--min-conf", type=float, default=0.0)
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("experiment", help="experiment registry")
+    p.add_argument("action", choices=["add", "list", "result"])
+    p.add_argument("--id")
+    p.add_argument("--name")
+    p.add_argument("--strategy-version", default="")
+    p.add_argument("--params", default="{}")
+    p.add_argument("--dataset", default="")
+    p.add_argument("--dev", default="")
+    p.add_argument("--val", default="")
+    p.add_argument("--test", default="")
+    p.add_argument("--seed", default="")
+    p.add_argument("--hypothesis", default="")
+    p.add_argument("--why", default="")
+    p.add_argument("--data", default="")
+    p.add_argument("--disproof", default="")
+    p.add_argument("--expected", default="")
+    p.add_argument("--result", default="")
+    p.add_argument("--status", default="")
     p = sub.add_parser("ab")
     p.add_argument("--record", action="store_true")
     p.add_argument("--json", action="store_true")
@@ -141,6 +166,50 @@ def main(argv: list[str] | None = None) -> int:
         else:
             res = run_oos(cfg.root, tape, db, out, a.grid)
             print(json.dumps(res, indent=1, default=str))
+        return 0
+
+    if a.cmd == "study":
+        from lvt.edge import studies
+        db = open_state_db(state_path)
+        tape = Database(cfg.path(cfg.app.tape_db), readonly=True)
+        lo = db.scalar("SELECT MIN(ts) FROM dislocations", (), None) or time.time() - 86400
+        start, end = _ts(a.start, lo), _ts(a.end, time.time())
+        if a.name == "gap":
+            rep = studies.gap_study(db, tape, start, end, a.env, a.min_conf)
+        elif a.name == "decay":
+            rep = studies.decay_study(db, tape, start, end, a.env)
+        elif a.name == "calibration":
+            rep = studies.calibration_study(db, tape, start, end, a.env)
+        elif a.name == "funnel":
+            rep = studies.funnel_study(db, tape, start, end, a.env)
+        else:
+            rep = studies.baseline_study(cfg, db, tape, start, end, cfg.path(cfg.app.data_dir) / "backtests")
+        print(json.dumps(rep, indent=1, default=str) if a.json else studies.format_study(a.name, rep))
+        return 0
+
+    if a.cmd == "experiment":
+        db = open_state_db(state_path)
+        if a.action == "list":
+            for r in db.query("SELECT experiment_id, name, status, strategy_version, created_ts FROM experiments ORDER BY created_ts"):
+                print(f"{r['experiment_id']:<10} {r['status']:<10} {time.strftime('%Y-%m-%d', time.gmtime(r['created_ts']))} "
+                      f"{r['name']}  [{r['strategy_version']}]")
+            return 0
+        if a.action == "add":
+            if not (a.name and a.hypothesis and a.disproof):
+                print("--name, --hypothesis and --disproof are required (hypothesis-first development)")
+                return 2
+            eid = a.id or f"EXP-{int(time.time()) % 10**6:06d}"
+            db.insert("experiments", {"experiment_id": eid, "name": a.name, "strategy_version": a.strategy_version,
+                                      "parameter_set": a.params, "dataset_version": a.dataset, "development_period": a.dev,
+                                      "validation_period": a.val, "test_period": a.test, "random_seed": a.seed,
+                                      "created_ts": time.time(), "hypothesis": a.hypothesis, "why": a.why,
+                                      "supporting_data": a.data, "disproof": a.disproof, "expected_effect": a.expected,
+                                      "status": a.status or "PLANNED", "updated_ts": time.time()})
+            print(f"registered {eid}")
+            return 0
+        db.update("experiments", "experiment_id", a.id, {"actual_result": a.result, "status": a.status or "DONE",
+                                                        "updated_ts": time.time()})
+        print(f"updated {a.id}")
         return 0
 
     if a.cmd == "ab":

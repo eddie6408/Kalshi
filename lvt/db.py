@@ -156,6 +156,24 @@ CREATE TABLE IF NOT EXISTS counterfactuals (
     time_to_stop_s REAL, max_favorable REAL, max_adverse REAL, ts REAL,
     PRIMARY KEY (signal_id, horizon_s)
 );
+-- market dislocation database (V2 brief sections 9, 58): fair value vs market,
+-- dense (on change >= 0.5c or every 10 s), with every input's age
+CREATE TABLE IF NOT EXISTS dislocations (
+    ts REAL, env TEXT, ticker TEXT, match_event TEXT, kind TEXT, model_version TEXT,
+    bid REAL, ask REAL, mid REAL, spread REAL, fair REAL, fair_lo REAL, fair_hi REAL, confidence REAL,
+    gap REAL, strength_d REAL, samples INTEGER, mapping TEXT, quote_age_s REAL, score_age_s REAL,
+    event_seq INTEGER, last_event TEXT, since_event_s REAL, flow_signed_short REAL, flow_signed_long REAL,
+    flow_shock INTEGER, depth_imbalance REAL, liquidity_usd REAL, state TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_disl ON dislocations(ticker, ts);
+CREATE INDEX IF NOT EXISTS ix_disl_ts ON dislocations(ts);
+-- experiment registry (V2 brief sections 5, 6)
+CREATE TABLE IF NOT EXISTS experiments (
+    experiment_id TEXT PRIMARY KEY, name TEXT, strategy_version TEXT, parameter_set TEXT, dataset_version TEXT,
+    development_period TEXT, validation_period TEXT, test_period TEXT, random_seed TEXT, created_ts REAL,
+    hypothesis TEXT, why TEXT, supporting_data TEXT, disproof TEXT, expected_effect TEXT,
+    actual_result TEXT, status TEXT, updated_ts REAL
+);
 CREATE TABLE IF NOT EXISTS strategy_experiments (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, name TEXT, baseline_env TEXT, challenger_env TEXT,
     window_start REAL, window_end REAL, result TEXT
@@ -202,6 +220,9 @@ CREATE TABLE IF NOT EXISTS sport_events (
     detail TEXT, flags TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_sport_events ON sport_events(event_ticker, ts_received);
+CREATE TABLE IF NOT EXISTS market_results (
+    ticker TEXT PRIMARY KEY, event_ticker TEXT, result TEXT, status TEXT, close_ts REAL, fetched_ts REAL
+);
 CREATE TABLE IF NOT EXISTS event_meta (
     event_ticker TEXT PRIMARY KEY, milestone_id TEXT, type TEXT, title TEXT, details TEXT,
     grp TEXT, start_date TEXT, first_seen REAL

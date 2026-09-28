@@ -71,6 +71,14 @@ class TapeRecorder:
             self.db.executemany("INSERT INTO sport_events VALUES (?,?,?,?,?,?,?,?)", [e.row() for e in events])
             self.rows_written += len(events)
 
+    def record_results(self, quotes, now: float) -> int:
+        """Settled results for calibration (market status finalized/settled)."""
+        rows = [(q.ticker, q.result, q.status, now) for q in quotes if q.result in ("yes", "no")]
+        if rows:
+            self.db.executemany("INSERT OR REPLACE INTO market_results (ticker, result, status, fetched_ts) "
+                                "VALUES (?,?,?,?)", rows)
+        return len(rows)
+
     def record_event_meta(self, event_ticker: str, meta: dict, now: float) -> None:
         """Match metadata (competitors, best-of, tour, round, related events),
         written once per event."""
