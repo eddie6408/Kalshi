@@ -51,6 +51,10 @@ class Clock:
 
 
 def _rec(tmp, clock=None, **kw):
+    # min_free_gb 0: the disk guard has its own test, and the rest must not
+    # depend on how much space the machine's temp folder has (the droplet's
+    # /tmp is a 2 GB tmpfs, under the 5 GB default).
+    kw.setdefault("min_free_gb", 0)
     return Recorder(Path(tmp) / "ticks", RecorderConfig.from_dict(kw), clock=clock or Clock())
 
 
