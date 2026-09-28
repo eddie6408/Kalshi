@@ -72,6 +72,18 @@ class TestOtherStudies(unittest.TestCase):
         self.assertEqual(rep["funnel"][0]["stage"], "market moves >=3c in <=60s (tennis)")
 
 
+class TestValidationReport(unittest.TestCase):
+    def test_not_ready_without_evidence(self):
+        from lvt.edge.validation import validation_report
+        from tests.helpers import cfg
+        db, tape = setup(True)
+        rep = validation_report(cfg(), db, tape)
+        self.assertEqual(len(rep["criteria"]), 10)
+        self.assertTrue(rep["recommendation"].startswith("NOT READY"))
+        by = {c["criterion"][:1]: c["status"] for c in rep["criteria"]}
+        self.assertEqual(by["4"], "INSUFFICIENT")          # paper fills can never validate execution
+
+
 class TestRegistry(unittest.TestCase):
     def test_hypothesis_required(self):
         from lvt.__main__ import main

@@ -277,6 +277,106 @@ def funnel_study(db: Database, tape: Database, start: float, end: float, env: st
     return {"funnel": out, "top_no_edge_reasons": no_edge}
 
 
+SCORE_BUCKETS = ((0, 20), (20, 40), (40, 60), (60, 70), (70, 80), (80, 90), (90, 101))
+
+
+def _outcomes(db: Database, env: str, start: float, end: float) -> list[dict]:
+    """Every BUY/WATCH/NO_EDGE signal with ONE outcome in cents per contract:
+    realized (taken and closed) or COUNTERFACTUAL (900 s, not taken). The
+    two are kept apart by the `kind` field and never summed together."""
+    sigs = db.query("SELECT s.id, s.score, s.action, s.decision, s.strategy, s.components, s.explanation, "
+                    "p.realized_pnl_usd, p.entry_qty, p.mfe_cents, p.mae_cents, p.status pstatus, "
+                    "c.hyp_pnl_cents, c.max_favorable, c.max_adverse FROM signals s "
+                    "LEFT JOIN positions p ON p.id = s.position_id "
+                    "LEFT JOIN counterfactuals c ON c.signal_id = s.id AND c.horizon_s = 900 "
+                    "WHERE s.env=? AND s.ts>=? AND s.ts<?", (env, start, end))
+    out = []
+    for r in sigs:
+        if r["decision"] == "TAKEN" and r["pstatus"] == "CLOSED" and r["entry_qty"]:
+            out.append({**r, "kind": "REALIZED", "cents": 100.0 * r["realized_pnl_usd"] / r["entry_qty"],
+                        "mfe": r["mfe_cents"], "mae": r["mae_cents"]})
+        elif r["decision"] != "TAKEN" and r["hyp_pnl_cents"] is not None:
+            out.append({**r, "kind": "COUNTERFACTUAL", "cents": r["hyp_pnl_cents"],
+                        "mfe": r["max_favorable"], "mae": r["max_adverse"]})
+    return out
+
+
+def _cell(v: list[dict]) -> dict:
+    c = sorted(x["cents"] for x in v)
+    m, se, t = _stats(c)
+    return {"n": len(c), "win_rate": round(sum(1 for x in c if x > 0) / len(c), 3), "mean_c": round(m, 3),
+            "median_c": round(c[len(c) // 2], 3), "t": None if t is None else round(t, 2),
+            "mean_mfe_c": round(sum(x["mfe"] or 0 for x in v) / len(v), 2),
+            "mean_mae_c": round(sum(x["mae"] or 0 for x in v) / len(v), 2)}
+
+
+def score_study(db: Database, start: float, end: float, env: str = "PAPER_EDGE") -> dict:
+    """V2 brief section 22: does a higher edge score mean better outcomes?
+    Realized and counterfactual outcomes are reported separately."""
+    obs = _outcomes(db, env, start, end)
+    table = {}
+    for kind in ("REALIZED", "COUNTERFACTUAL"):
+        rows = [o for o in obs if o["kind"] == kind]
+        table[kind] = [{"score": f"{lo}-{hi if hi < 101 else 100}", **_cell(v)}
+                       for lo, hi in SCORE_BUCKETS for v in [[o for o in rows if lo <= (o["score"] or 0) < hi]] if v]
+    cf = table["COUNTERFACTUAL"]
+    usable = [x for x in cf if x["n"] >= 30]
+    mono = (len(usable) >= 3 and all(b["mean_c"] >= a["mean_c"] for a, b in zip(usable, usable[1:])))
+    verdict = ("INSUFFICIENT DATA" if len(usable) < 3 else
+               "SCORE ORDERS OUTCOMES (monotone)" if mono else "SCORE DOES NOT ORDER OUTCOMES - redesign (section 22)")
+    return {"table": table, "verdict": verdict,
+            "note": "COUNTERFACTUAL = 1-contract taker round trip on signals not taken; never P&L"}
+
+
+def error_study(db: Database, start: float, end: float, env: str = "PAPER_EDGE") -> dict:
+    """V2 brief sections 37-38: false positives (traded losers) vs false
+    negatives (rejected winners) - are the filters too loose or too tight?"""
+    obs = _outcomes(db, env, start, end)
+    traded = [o for o in obs if o["kind"] == "REALIZED"]
+    rejected = [o for o in obs if o["kind"] == "COUNTERFACTUAL" and o["action"] in ("BUY", "WATCH")]
+    no_edge = [o for o in obs if o["kind"] == "COUNTERFACTUAL" and o["action"] == "NO_EDGE"]
+    tw, tl = sum(o["cents"] > 0 for o in traded), sum(o["cents"] <= 0 for o in traded)
+    rw, rl = sum(o["cents"] > 0 for o in rejected), sum(o["cents"] <= 0 for o in rejected)
+    nw, nl = sum(o["cents"] > 0 for o in no_edge), sum(o["cents"] <= 0 for o in no_edge)
+    missed = db.scalar("SELECT COUNT(*) FROM orders WHERE env=? AND purpose='ENTRY' AND status IN ('NO_FILL','CANCELLED') "
+                       "AND created_ts>=? AND created_ts<?", (env, start, end), 0)
+    return {"TRADED_WIN": tw, "TRADED_LOSS": tl, "REJECTED_WIN": rw, "REJECTED_LOSS": rl,
+            "NO_EDGE_WOULD_WIN": nw, "NO_EDGE_WOULD_LOSE": nl, "MISSED_ENTRIES (no fill / cancelled)": missed,
+            "false_positive_rate": round(tl / (tw + tl), 3) if tw + tl else None,
+            "false_negative_rate (watched/rejected setups)": round(rw / (rw + rl), 3) if rw + rl else None,
+            "false_negative_rate (no-edge)": round(nw / (nw + nl), 3) if nw + nl else None,
+            "rejected_mean_c": _cell(rejected) if rejected else None, "traded_mean_c": _cell(traded) if traded else None,
+            "note": "rejected/no-edge outcomes are COUNTERFACTUAL taker round trips (900 s), not P&L"}
+
+
+def latency_study(db: Database, start: float, end: float, env: str = "PAPER_EDGE") -> dict:
+    """V2 brief section 11: the measured latency chain (seconds, percentiles).
+    The score feed has no provider timestamp, so the chain starts at receipt."""
+    rows = db.query("SELECT o.*, s.explanation FROM orders o LEFT JOIN signals s ON s.id=o.signal_id "
+                    "WHERE o.env=? AND o.created_ts>=? AND o.created_ts<?", (env, start, end))
+
+    def pct(vals):
+        v = sorted(x for x in vals if x is not None and x >= 0)
+        if not v:
+            return None
+        return {"n": len(v), "p50": round(v[len(v) // 2], 3), "p90": round(v[int(len(v) * 0.9)], 3), "max": round(v[-1], 3)}
+
+    import json as _j
+    score_age = []
+    for r in rows:
+        try:
+            score_age.append(_j.loads(r["explanation"] or "{}").get("context_age_s"))
+        except (TypeError, ValueError):
+            pass
+    return {"score_received_to_decision (score age at signal)": pct(score_age),
+            "market_data_to_signal": pct([(r["signal_ts"] or 0) - (r["data_ts"] or 0) for r in rows if r["data_ts"]]),
+            "signal_to_order": pct([(r["created_ts"] or 0) - (r["signal_ts"] or 0) for r in rows if r["signal_ts"]]),
+            "order_to_submit": pct([(r["submitted_ts"] or 0) - (r["created_ts"] or 0) for r in rows if r["submitted_ts"]]),
+            "submit_to_first_fill": pct([(r["arrival_ts"] or 0) - (r["submitted_ts"] or 0) for r in rows
+                                         if r["arrival_ts"] and (r["filled_count"] or 0) > 0]),
+            "note": "paper fills: submit_to_first_fill is simulated latency + time until the market reached us"}
+
+
 def _breakdown(rows, key) -> dict:
     from lvt.reports import metrics
     g = defaultdict(list)

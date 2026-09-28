@@ -35,7 +35,21 @@ fair-value gap is shown to predict movement (section 81) and to be executable
 | Where the edge exists | 83 | after 81/82 |
 | Calibration | 8, 27 | `lvt study calibration` (needs settled outcomes) |
 | Opportunity funnel | 39 | `lvt study funnel` |
-| V2 logic (information vs flow probability, regime engine, edge-score calibration, ...) | 15-24, 30-36 | only where 81/82 justify it |
+| Edge-score calibration, false positives/negatives, latency chain | 11, 22, 37, 38 | `lvt study scores|errors|latency` (done) |
+| Degradation monitor + stop-trading conditions + incident snapshots | 67, 74 | done: OK / DEGRADED / SUSPENDED (dashboard "Health") |
+| Observe-only mode | 65 | done: `[edge] observe_only = true` records SHADOW signals, no account change |
+| Fault/timing/execution/strategy/risk tests | 61 | done: tests/test_v2_robustness.py |
+| Strategy validation report | 45, 47, 76, 77 | `lvt validation` (done): ten criteria PASS/FAIL/INSUFFICIENT |
+| V2 logic (information vs flow probability, regime engine, ...) | 15-24, 30-36 | only where 81/82 justify it |
+
+EDGE_ENGINE_V1 is FROZEN while EXP-003 (the A/B) runs: changing it would
+contaminate the experiment. V2 changes go into a new version.
+
+## Hypotheses queued for V2 (not implemented)
+* EXP-005 pool order flow across mirror markets: YES on player A and NO on
+  player B are the same risk; V1 reads flow per market, so selling in one
+  market does not block the mirror trade (found by the section 61 conflicting-
+  flow test).
 
 ## Audit summary (2026-09-28 12:35 UTC)
 * Live: PAPER (BASELINE_V1) + PAPER_EDGE (EDGE_ENGINE_V1) on the same data;
@@ -49,6 +63,7 @@ fair-value gap is shown to predict movement (section 81) and to be executable
   outcomes (0), dense fair-value history (134 throttled rows).
 
 ## Commands
-lvt study gap|decay|calibration|funnel|baseline [--start ISO --end ISO --env PAPER_EDGE]
+lvt study gap|decay|calibration|funnel|baseline|scores|errors|latency [--start ISO --end ISO --env PAPER_EDGE]
+lvt validation
 lvt experiment add --name ... --hypothesis ... --disproof ... | list | result --id ... --status ...
 lvt ab

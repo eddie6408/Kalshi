@@ -172,6 +172,7 @@ async function tick(){
   ['Universe / probe / hot',`${e.universe}/${e.probe}/${e.hot}`],['Open positions',e.open_positions],['Working orders',e.working_orders],
   ['Req/s · 429s',`${e.req_per_s} · ${e.http_429}`],['Clock skew',e.clock_skew_s+'s'],['Cycle',e.cycle_ms+'ms'],['Kill switch',e.kill_switch?'ON':'off'],['Account risk limits',e.risk_limits||'–'],
   ['Reconcile',(st.reconcile||{}).summary||'–'],
+  ['Health',(e.health_state||{}).state||'–'],
   ['A/B challenger',e.edge_engine?(e.edge_engine.version+' · '+e.edge_engine.live_matches+' live matches · '+e.edge_engine.open_positions+' open'):'off']];
  $('status').innerHTML=kv.map(([k,v])=>`<div><b>${k}</b>${esc(v)}</div>`).join('');
  const fc=e.fail_closed||{};$('fc').textContent=Object.keys(fc).length?'FAIL-CLOSED (no new orders): '+Object.entries(fc).map(([k,v])=>k+': '+v).join(' | '):(e.entries_halted||'');

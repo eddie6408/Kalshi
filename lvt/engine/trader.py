@@ -368,6 +368,17 @@ class Engine:
             sig.decision = sig.action                          # WATCH | NO_EDGE
             self._record_signal(sig)
         buys.sort(key=lambda x: -float(x[0].explanation.get("rank", 0.0)))
+        if self.cfg.data.get("edge", {}).get("observe_only", False):
+            # V2 brief section 65: observe-only - record what WOULD be traded (counterfactuals
+            # label it later); no order, no position, no account change
+            for sig, _, _, _ in buys:
+                k = (sig.ticker, sig.strategy, sig.anchor)
+                if now - self.watch_seen.get(k, -1e18) < 300:
+                    continue
+                self.watch_seen[k] = now
+                sig.decision = "SHADOW"
+                self._record_signal(sig)
+            return
         for sig, snap, m, info in buys:
             k = (sig.ticker, sig.strategy, sig.anchor)
             last = self.buy_attempts.get(k)

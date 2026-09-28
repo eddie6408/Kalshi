@@ -131,7 +131,7 @@ def counterfactuals(db: Database, tape: Database, now: float, horizon: int = 900
     """Hypothetical taker round trip for setups we did not take (1 contract):
     buy at the signal's ask, exit at the target or the stop (whichever the
     side's bid reached first) or at the bid at the horizon; fees included."""
-    rows = db.query("SELECT s.* FROM signals s WHERE s.decision IN ('REJECTED','WATCH','NO_EDGE') AND s.ts<=? "
+    rows = db.query("SELECT s.* FROM signals s WHERE s.decision IN ('REJECTED','WATCH','NO_EDGE','SHADOW') AND s.ts<=? "
                     "AND s.ask IS NOT NULL AND s.target IS NOT NULL AND s.stop IS NOT NULL AND NOT EXISTS "
                     "(SELECT 1 FROM counterfactuals c WHERE c.signal_id=s.id AND c.horizon_s=?) ORDER BY s.ts LIMIT ?",
                     (now - horizon - 5, horizon, limit))

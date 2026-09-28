@@ -102,10 +102,13 @@ class EdgeEngine:
         self.pending_votes: list[tuple] = []               # (due_ts, ticker, expected, mid_at_event)
         self.recorded_ref: dict[str, tuple[float, float]] = {}
         self.last_disl: dict[str, tuple[float, float, float]] = {}
+        self.malfunctions = 0                              # impossible model outputs (monitor suspends on these)
         self.no_edge_seen: dict[tuple, float] = {}
         self.fill_prob_cache = (0.0, float(self.e.prior_fill_probability))
         style = cfg.data.get("execution", {})
-        blob = json.dumps([cfg.data.get("edge", {}), style.get("entry_style"), style.get("exit_style"),
+        # run-mode switches (observe_only) are not strategy parameters: excluded from the version
+        params = {k: v for k, v in cfg.data.get("edge", {}).items() if k not in ("observe_only",)}
+        blob = json.dumps([params, style.get("entry_style"), style.get("exit_style"),
                            cfg.data.get("maker", {})], sort_keys=True, default=str).encode()
         self.version = f"{self.e.version}+{hashlib.sha256(blob).hexdigest()[:8]}"
         self.maker_entry = style.get("entry_style", "taker") == "maker"
@@ -181,6 +184,9 @@ class EdgeEngine:
             self.refs.sample_anchor(t, mid, s.spread(), now)
             ref, _ = self.refs.reference(t, now)
             if ref is None:
+                continue
+            if not (0.0 <= ref.value <= 100.0) or ref.value != ref.value:
+                self.malfunctions += 1                     # never trade on an impossible reference
                 continue
             h = self.ref_hist.setdefault(t, deque(maxlen=2000))
             if not h or abs(h[-1][1] - ref.value) > 1e-6 or now - h[-1][0] > 30:

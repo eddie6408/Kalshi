@@ -38,6 +38,7 @@ from lvt.engine.trader import Engine
 from lvt.execution.paper import PaperVenue
 from lvt.execution.reconcile import reconcile
 from lvt.health import ResourceMonitor
+from lvt.monitor import Monitor
 from lvt.labeler import label_signals
 from lvt.live_gate import EXIT_LIVE_REFUSED, build_live_venue, credentials_present, format_report, live_allowed
 from lvt.models import Snapshot
@@ -74,6 +75,7 @@ class LiveRunner:
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.monitor = ResourceMonitor()
+        self.guard = Monitor(cfg, self.db, self.alerter, cfg.path(cfg.app.data_dir))
         self.venue = None
         self.engine: Engine | None = None
         self.edge_engine: Engine | None = None
@@ -284,6 +286,7 @@ class LiveRunner:
         if hot:
             try:
                 quotes = self.data.quotes(hot + self.companions)
+                quotes = self.guard.on_quotes(quotes, [x for x, _, _ in self._engines()])
                 self.last_quote_ok = time.time()
                 if "MARKET_DATA" in e.risk.fail_closed:
                     e.risk.fail_closed.pop("MARKET_DATA")
@@ -501,6 +504,11 @@ class LiveRunner:
                     eng.risk.fail_closed.pop("STARTUP", None)
         if self._due("health", cfg.health.interval_s, now):
             self._health(now)
+            try:
+                self.guard.periodic(now, self.http.stats, [x for x, _, _ in self._engines()],
+                                    self.edge_engine.edge if self.edge_engine is not None else None)
+            except Exception as exc:                          # noqa: BLE001
+                log.warning("monitor failed: %s", exc)
         if self._due("labeler", cfg.labeler.interval_s, now):
             try:
                 n = label_signals(self.db, self.tape_db, cfg, now)
@@ -556,7 +564,8 @@ class LiveRunner:
             "clock_skew_s": round(st.clock_skew_s, 2), "cycle_ms": round(self.cycle_ms, 1),
             "tape_rows": self.tape.rows_written,
             "live_score_events": sum(1 for st in self.ctx_state.values() if st.status == "live"),
-            "companions": len(self.companions), "sport_events": self.sport_events_seen, **e.status(),
+            "companions": len(self.companions), "sport_events": self.sport_events_seen,
+            "health_state": self.guard.status(), **e.status(),
         }
         if self.edge_engine is not None:
             e2 = self.edge_engine
@@ -634,6 +643,7 @@ class LiveRunner:
                 exit_code = 1
                 break
             self.cycle_ms = (time.time() - t0) * 1000.0
+            self.guard.on_cycle(self.cycle_ms)
             self.stop.wait(max(0.0, interval - (time.time() - t0)))
         self.shutdown()
         return exit_code

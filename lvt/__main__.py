@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--end")
     p.add_argument("--edge", action="store_true", help="replay EDGE_ENGINE_V1 instead of the baseline")
     p = sub.add_parser("study", help="V2 empirical studies (read-only)")
-    p.add_argument("name", choices=["gap", "decay", "calibration", "funnel", "baseline"])
+    p.add_argument("name", choices=["gap", "decay", "calibration", "funnel", "baseline", "scores", "errors", "latency"])
     p.add_argument("--start")
     p.add_argument("--end")
     p.add_argument("--env", default="PAPER_EDGE")
@@ -75,6 +75,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--expected", default="")
     p.add_argument("--result", default="")
     p.add_argument("--status", default="")
+    p = sub.add_parser("validation", help="strategy validation report (V2 sections 47, 76, 77)")
+    p.add_argument("--env", default="PAPER_EDGE")
+    p.add_argument("--json", action="store_true")
     p = sub.add_parser("ab")
     p.add_argument("--record", action="store_true")
     p.add_argument("--json", action="store_true")
@@ -182,9 +185,21 @@ def main(argv: list[str] | None = None) -> int:
             rep = studies.calibration_study(db, tape, start, end, a.env)
         elif a.name == "funnel":
             rep = studies.funnel_study(db, tape, start, end, a.env)
+        elif a.name == "scores":
+            rep = studies.score_study(db, start, end, a.env)
+        elif a.name == "errors":
+            rep = studies.error_study(db, start, end, a.env)
+        elif a.name == "latency":
+            rep = studies.latency_study(db, start, end, a.env)
         else:
             rep = studies.baseline_study(cfg, db, tape, start, end, cfg.path(cfg.app.data_dir) / "backtests")
         print(json.dumps(rep, indent=1, default=str) if a.json else studies.format_study(a.name, rep))
+        return 0
+
+    if a.cmd == "validation":
+        from lvt.edge.validation import format_validation, validation_report
+        rep = validation_report(cfg, open_state_db(state_path), Database(cfg.path(cfg.app.tape_db), readonly=True), a.env)
+        print(json.dumps(rep, indent=1, default=str) if a.json else format_validation(rep))
         return 0
 
     if a.cmd == "experiment":
