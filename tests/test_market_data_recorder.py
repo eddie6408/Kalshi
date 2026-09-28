@@ -396,6 +396,17 @@ def test_a_skipped_market_carries_its_stage_to_the_watch():
         assert info["stage"] == "MODEL" and info["reason"]
 
 
+def test_markets_outside_the_strategys_series_are_not_watched():
+    with tempfile.TemporaryDirectory() as tmp:
+        s, _ = _strategy(tmp, StubWatch())
+        gold = mkt(ticker="KXGOLDH-1", event="GOLD")
+        gold.series_ticker = "KXGOLDH"
+        s.find([gold], {"KXGOLDH-1": book()}, 500.0)
+        assert s.production_watch.watched == []
+        s.find([mkt()], {"KXFAKE-1": book()}, 500.0)
+        assert [t for t, _ in s.production_watch.watched] == ["KXFAKE-1"]
+
+
 def test_without_a_watch_nothing_changes():
     with tempfile.TemporaryDirectory() as tmp:
         s, j = _strategy(tmp)

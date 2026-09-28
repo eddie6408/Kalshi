@@ -281,15 +281,25 @@ class ForecastStrategy:
         and ask for the same market to be watched on production - with our
         verdict, for the maker shadow (C2 M0). Never blocks, never raises."""
         try:
+            ctx = self._ctx if self._ctx.get("ticker") == m.ticker else {}
+            est = ctx.get("estimate")
+            usable = est is not None and getattr(est, "usable", False)
+            # Only this strategy's own markets. The exchange-wide arbitrage
+            # sweep hands every event on the exchange to find() - gold, NFL,
+            # everything - and watching those spent the production budget on
+            # markets this strategy never prices (first hour live, 205 watched).
+            series = self.candidate_series()
+            name = (m.series_ticker or m.ticker).upper()
+            own = any(name.startswith(p.upper()) for p in series) if series else usable
+            if not own:
+                return
             if self.recorder is not None:
                 self.recorder.record("demo_book", {"m": m.ticker, "src": self.name,
                                                    "b": book_levels(book)})
             if self.production_watch is None:
                 return
-            ctx = self._ctx if self._ctx.get("ticker") == m.ticker else {}
-            est = ctx.get("estimate")
             info = None
-            if est is not None and getattr(est, "usable", False):
+            if usable:
                 ev = est.evidence or {}
                 if op is not None:
                     stage, reason = "ACCEPTED", ""
