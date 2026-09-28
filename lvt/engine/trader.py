@@ -304,7 +304,10 @@ class Engine:
                 p.status = "OPEN"                          # remainder: exit engine retries next cycle
                 self.book.save(p)
             if p.status == "CLOSED":
-                self.cooldown_until[p.ticker] = up.ts + self.cfg.signals.market_cooldown_after_exit_s
+                cd = self.cfg.signals.market_cooldown_after_exit_s
+                if (p.exit_reason or "").startswith("MAX_LOSS"):
+                    cd = max(cd, self.cfg.signals.get("market_cooldown_after_stop_s", cd))
+                self.cooldown_until[p.ticker] = up.ts + cd
                 log.info("CLOSED %s %s %s net $%.2f (%s)", p.strategy, p.ticker, p.side, p.realized_pnl_usd, p.exit_reason)
         n = sum(f.count for f in up.fills)
         if n:

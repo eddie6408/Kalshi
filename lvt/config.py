@@ -123,7 +123,11 @@ class Config:
         return hashlib.sha256(blob).hexdigest()[:12]
 
     def strategy_hash(self, name: str) -> str:
-        blob = json.dumps(self.data["strategies"][name], sort_keys=True).encode()
+        # execution style is part of the strategy's identity: taker and maker
+        # results must never pool under one version
+        ex = self.data.get("execution", {})
+        style = {k: ex.get(k) for k in ("entry_style", "exit_style") if k in ex}
+        blob = json.dumps([self.data["strategies"][name], style], sort_keys=True).encode()
         return hashlib.sha256(blob).hexdigest()[:8]
 
     def strategy_version(self, name: str) -> str:

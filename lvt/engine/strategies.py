@@ -112,8 +112,9 @@ class DipStrategy(Strategy):
         sm = side_metrics(m, self.side)
         vs = sm["velocity_short"]
 
-        target = min(lo + c.target_retrace_frac * drop, hi - 0.5)
-        stop = lo - c.stop_buffer_cents
+        target = min(lo + c.target_retrace_frac * drop, hi - 0.5,
+                     cur_ask + c.get("max_target_distance_cents", 99.0))
+        stop = lo - max(c.stop_buffer_cents, c.get("stop_vol_mult", 0.0) * m.realized_vol)
         net, risk, rr = edge_math(cur_ask, target, stop, info, self.sig_cfg.slippage_buffer_cents)
 
         failures, passes = [], []
@@ -200,8 +201,8 @@ class MomentumStrategy(Strategy):
 
         cur_mid, cur_bid, cur_ask = mid[-1], bid[-1], ask[-1]
         proj = min(max(slope * c.target_minutes, c.min_target_cents), c.max_target_cents)
-        target = min(cur_bid + proj, 99.0)
-        stop = cur_ask - c.stop_cents
+        target = min(cur_bid + proj, 99.0, cur_ask + c.get("max_target_distance_cents", 99.0))
+        stop = cur_ask - max(c.stop_cents, c.get("stop_vol_mult", 0.0) * m.realized_vol)
         net, risk, rr = edge_math(cur_ask, target, stop, info, self.sig_cfg.slippage_buffer_cents)
 
         failures, passes = [], []
