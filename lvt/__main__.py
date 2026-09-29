@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--end")
     p.add_argument("--edge", action="store_true", help="replay EDGE_ENGINE_V1 instead of the baseline")
     p = sub.add_parser("study", help="V2 empirical studies (read-only)")
-    p.add_argument("name", choices=["gap", "decay", "calibration", "funnel", "baseline", "scores", "errors", "latency"])
+    p.add_argument("name", choices=["gap", "decay", "calibration", "funnel", "baseline", "scores", "errors", "latency", "model"])
     p.add_argument("--start")
     p.add_argument("--end")
     p.add_argument("--env", default="PAPER_EDGE")
@@ -177,6 +177,11 @@ def main(argv: list[str] | None = None) -> int:
         tape = Database(cfg.path(cfg.app.tape_db), readonly=True)
         lo = db.scalar("SELECT MIN(ts) FROM dislocations", (), None) or time.time() - 86400
         start, end = _ts(a.start, lo), _ts(a.end, time.time())
+        if a.name == "model":                          # EXP-006; window pre-registered from 2026-09-28 13:00 UTC
+            from lvt.edge.model_study import format_model_study, model_study
+            rep = model_study(tape, _ts(a.start, _ts("2026-09-28T13:00", 0)), end, cfg.data.get("edge", {}))
+            print(json.dumps(rep, indent=1, default=str) if a.json else format_model_study(rep))
+            return 0
         if a.name == "gap":
             rep = studies.gap_study(db, tape, start, end, a.env, a.min_conf)
         elif a.name == "decay":
