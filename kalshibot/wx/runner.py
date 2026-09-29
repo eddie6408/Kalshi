@@ -21,7 +21,7 @@ from .hourly import HourlyIndexModel, load_indexes
 from .paper import PaperBook, PaperConfig, daily_shadow, quotes_of
 from .pit import PointInTime
 from .quota import QuotaGuard, monitor_usage
-from .registry import WeatherRegistry
+from .registry import WeatherRegistry, with_backoff
 from .store import WxStore
 
 log = logging.getLogger(__name__)
@@ -121,7 +121,8 @@ class WxResearch:
         for i in range(0, len(tickers), 100):
             if not self.quota.allow("kalshi_public"):
                 break
-            out.update(quotes_of(self.reader.markets_by_ticker(tickers[i:i + 100])))
+            part = tickers[i:i + 100]
+            out.update(quotes_of(with_backoff(lambda: self.reader.markets_by_ticker(part))))
         return out
 
     # -------------------------------------------------------------- tasks

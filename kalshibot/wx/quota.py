@@ -30,7 +30,7 @@ DEFAULT_LIMITS = {
 }
 #: Minimum seconds between two research calls to one provider.
 DEFAULT_SPACING = {"open_meteo": 0.25, "twc_climate": 0.15, "acis": 0.3,
-                   "kalshi_public": 0.12, "aviationweather": 0.3}
+                   "kalshi_public": 0.5, "aviationweather": 0.3}
 
 
 class QuotaExceeded(RuntimeError):

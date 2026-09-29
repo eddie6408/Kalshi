@@ -359,3 +359,22 @@ def test_new_reader_methods_are_public_market_data_paths():
     from kalshibot.env_guard import is_public_market_data_path
     for p in ("/series", "/events", "/markets"):
         assert is_public_market_data_path(p)
+
+
+def test_kalshi_reads_back_off_on_429():
+    from kalshibot.wx.registry import with_backoff
+
+    class E(Exception):
+        def __init__(self, code):
+            self.response = type("R", (), {"status_code": code})()
+    calls = {"n": 0}
+    waits = []
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise E(429)
+        return "ok"
+    assert with_backoff(flaky, sleep=waits.append) == "ok" and waits == [2.0, 4.0]
+    with pytest.raises(E):
+        with_backoff(lambda: (_ for _ in ()).throw(E(403)), sleep=waits.append)

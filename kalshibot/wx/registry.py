@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 
 from . import taxonomy as tx
@@ -38,6 +39,20 @@ def market_state(status: str | None) -> str:
     return "closed"
 
 
+def with_backoff(fn, tries: int = 4, base: float = 2.0, sleep=time.sleep):
+    """Retry a Kalshi read on 429 / 5xx with exponential backoff. Kalshi's
+    public API is shared with the bot's own production reads."""
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            code = getattr(getattr(exc, "response", None), "status_code", None)
+            if code not in (429, 500, 502, 503, 504) or i == tries - 1:
+                raise
+            sleep(base * (2 ** i))
+    return None
+
+
 def _f(x):
     try:
         return None if x is None or x == "" else float(x)
@@ -55,12 +70,13 @@ class WeatherRegistry:
         self.live_series = {k.upper(): (v or "").upper() for k, v in (live_series or {}).items()}
         self.max_pages = max_pages
         self.last_summary: dict = {}
+        self.partial = False
 
     # ------------------------------------------------------------------ io
     def _series(self) -> dict[str, dict]:
         if not self.quota.allow("kalshi_public"):
             return {}
-        rows = self.reader.series_list(CATEGORY)
+        rows = with_backoff(lambda: self.reader.series_list(CATEGORY))
         now = utcnow()
         known = {r["series"] for r in self.store.query("SELECT series FROM wx_series")}
         new = []
@@ -88,7 +104,13 @@ class WeatherRegistry:
         for _ in range(self.max_pages):
             if not self.quota.allow("kalshi_public"):
                 break
-            page = self.reader.events_page(status="open", cursor=cursor)
+            try:
+                page = with_backoff(lambda: self.reader.events_page(status="open", cursor=cursor))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("WX REGISTRY  event paging stopped early (%s); classified what was read",
+                            exc)
+                self.partial = True
+                break
             events += [e for e in page.get("events") or [] if e.get("series_ticker") in series]
             cursor = page.get("cursor")
             if not cursor:
@@ -176,6 +198,7 @@ class WeatherRegistry:
 
     # ---------------------------------------------------------------- pass
     def refresh(self) -> dict:
+        self.partial = False
         series = self._series()
         if not series:
             return {"ok": False, "reason": "series list unavailable or quota"}
@@ -202,7 +225,7 @@ class WeatherRegistry:
         self.store.execute(
             "UPDATE wx_contracts SET market_status='closed' WHERE market_status='open' "
             "AND close_time < ?", (now,))
-        self.last_summary = {"ok": True, "at": utcnow(), "series": len(series),
+        self.last_summary = {"ok": True, "partial": self.partial, "at": utcnow(), "series": len(series),
                              "events": len(events), "markets": len(seen), "by_class": counts}
         log.info("WX REGISTRY  %d series, %d open events, %d markets classified",
                  len(series), len(events), len(seen))
