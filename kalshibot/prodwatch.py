@@ -215,6 +215,16 @@ class ProductionWatch:
                 best = (d, q)
         return best[1].mid(side) if best else None
 
+    def refresh_now(self) -> int:
+        """Operator refresh: forget any back-off and re-read every watched
+        market's book and prints on the next pass. Returns how many."""
+        with self._lock:
+            self.backoff_until = 0.0
+            for w in self._w.values():
+                w.book_at = 0.0
+                w.trades_at = 0.0
+            return len(self._w)
+
     def watched(self) -> list[str]:
         with self._lock:
             return list(self._w)

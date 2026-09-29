@@ -20,6 +20,7 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 
 from kalshibot.arb_engine import ArbitrageEngine, ScanReport, TradingMode
 from kalshibot.position_manager import PositionConfig, PositionWorker
@@ -32,6 +33,7 @@ from kalshibot.env_guard import (ProductionBlocked, assert_demo_environment,
 from kalshibot.fees import FeeModel
 from kalshibot.forecast_scoring import score_pending
 from kalshibot.journal import Journal
+from kalshibot.control import ALLOWED as CONTROL_REQUESTS, ControlInbox, write_status
 from kalshibot.maker_shadow import MakerShadow, MakerShadowConfig
 from kalshibot.market_state import MarketState
 from kalshibot.paper_live import PaperConfig, PaperLiveAccount, ProdArbCheck
@@ -638,6 +640,72 @@ def main() -> int:
             WorkerConfig.from_dict("prod_arb", workers_cfg.get("prod_arb"), 60.0),
             prod_arb.run_pass))
 
+    # ---- the dashboard: status out, operator requests in ---------------
+    # kalshibot/control.py. Files under data/control; the only request is a
+    # refresh of market data. Nothing here can trade or change a limit.
+    control_dir = settings.path("dashboard.control_dir", "data/control")
+    inbox = ControlInbox(control_dir)
+    status_path = control_dir / "status.json"
+    started_at = datetime.now(timezone.utc)
+
+    def _health(w) -> dict:
+        h = w.health
+        return {"name": w.cfg.name, "interval": w.cfg.interval, "running": h.running,
+                "idle": h.idle, "suspended": h.suspended, "passes": h.passes,
+                "failures": h.failures, "consecutive_failures": h.consecutive_failures,
+                "last_seconds": round(h.last_seconds, 1),
+                "last_finished": h.last_finished.isoformat() if h.last_finished else None,
+                "last_error": (h.last_error or "")[:300],
+                "waiting_for": h.last_skip_reason if h.idle else "",
+                "summary": h.summary()}
+
+    def publish_status(state_name: str = "running") -> None:
+        try:
+            write_status(status_path, {
+                "state": state_name, "at": datetime.now(timezone.utc).isoformat(),
+                "pid": os.getpid(), "started_at": started_at.isoformat(),
+                "run_id": run_id, "mode": mode.value, "env": settings.kalshi_env,
+                "versions": run_versions,
+                "workers": [_health(w) for w in supervisor.workers],
+                "feed": ({"enabled": True, "connected": bool(feed.stats.connected_since),
+                          "connected_since": feed.stats.connected_since,
+                          "last_message_at": feed.stats.last_message_at,
+                          "summary": feed.stats.summary()}
+                         if feed_cfg.enabled else {"enabled": False}),
+                "market_state": {"summary": state.stats.summary(),
+                                 "hit_rate": state.stats.book_hit_rate},
+                "recorder": recorder.summary(),
+                "prodwatch": prod_watch.summary() if prod_watch else None,
+                "maker_shadow": maker_shadow.summary() if maker_shadow else None,
+                "paper_live": paper_live.summary() if paper_live else None,
+                "prod_arb": prod_arb.summary() if prod_arb else None,
+                "fees": engine.fee_schedule.summary() if engine.fee_schedule else None,
+                "sources": MONITOR.snapshot(),
+                "control": {n: inbox.last_done(n) for n in CONTROL_REQUESTS},
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.debug("could not write the dashboard status: %s", exc)
+
+    def control_pass() -> None:
+        for name, body in inbox.pending():
+            if name == "refresh":
+                done = []
+                state.invalidate_all("operator refresh from the dashboard")
+                done.append("cached books distrusted")
+                if feed_cfg.enabled:
+                    feed._drop("operator refresh from the dashboard")
+                    done.append("market feed reconnecting")
+                if prod_watch is not None:
+                    done.append(f"{prod_watch.refresh_now()} production markets re-read")
+                log.warning("CONTROL  refresh requested (%s): %s",
+                            body.get("by") or "dashboard", "; ".join(done))
+                inbox.done(name, True, "; ".join(done))
+                publish_status()
+
+    supervisor.add(Worker(
+        WorkerConfig.from_dict("control", workers_cfg.get("control"), 5.0),
+        control_pass))
+
     # Execution quality: what would this order cost on a REAL book?
     #
     # The one question demo cannot answer, and the last unknown before any
@@ -767,6 +835,7 @@ def main() -> int:
                 print(f"{D}  {w.cfg.name} worker every "
                       f"{w.cfg.interval:.0f}s{X}")
             supervisor.start()
+            publish_status()
             # A heartbeat on ITS OWN clock, fast enough that a person watching
             # can tell the difference between waiting and dead. The old single
             # loop said "EXCHANGE CLOSED, checking again in 15 min" every time
@@ -779,6 +848,7 @@ def main() -> int:
                     break
                 supervisor.check_threads()
                 line = supervisor.summary()
+                publish_status()
                 waiting = supervisor.waiting()
                 colour = Y if waiting else D
                 print(f"{colour}  {time.strftime('%H:%M:%S')}  {line}{X}")
@@ -841,6 +911,7 @@ def main() -> int:
         if feed_thread is not None:
             feed_thread.join(timeout=5)
         recorder.stop()
+        publish_status("stopped")
         journal.end_run(run_id)
 
     s = journal.arbitrage_summary()
