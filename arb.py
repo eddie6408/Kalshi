@@ -543,15 +543,14 @@ def main() -> int:
     prod_arb = None
     if paper_cfg.enabled:
         from kalshibot.strategies.forecast import ForecastStrategy
-        clone, skill = None, None
-        if engine.forecasts:
-            s0 = engine.forecasts[0]
-            clone = ForecastStrategy(s0.estimator, s0.fees, s0.cfg, journal=None,
-                                     gates=s0.gates, monitor=s0.monitor,
-                                     market_skill=None)
-            skill = s0.market_skill
-        paper_live = PaperLiveAccount(journal, engine.gate, clone, market_skill=skill,
-                                      cfg=paper_cfg, versions=run_versions)
+        # One clone per strategy: same estimator, same rules, no journal and
+        # no market-skill gate (its verdict is recorded, not obeyed).
+        clones = {s.name: (ForecastStrategy(s.estimator, s.fees, s.cfg, journal=None,
+                                            gates=s.gates, monitor=s.monitor,
+                                            market_skill=None), s.market_skill)
+                  for s in engine.forecasts}
+        paper_live = PaperLiveAccount(journal, engine.gate, cfg=paper_cfg,
+                                      versions=run_versions, clones=clones)
         if prod_watch is not None:
             prod_watch.listeners.append(paper_live)
         if paper_cfg.arb_enabled:

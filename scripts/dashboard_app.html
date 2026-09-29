@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="dashboard-token" content="__DASHBOARD_TOKEN__">
-<title>Prometheus · Kalshi Desk</title>
+<title>PROMETHEUS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -39,6 +39,9 @@
   --s4: #c98500;
   --s5: #d55181;
   --s6: #9085e9;
+  /* entity -> colour, fixed: Weather s1, Arbitrage s2, Inflation s3, Paper s6 */
+  --paper: var(--s6);
+  --brand-line: #14b8a6;      /* the single all-strategies P&L line */
   --grid: #16222e;
   --radius: 14px;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -70,7 +73,7 @@ a { color: var(--accent); text-decoration: none; }
   width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
   background: linear-gradient(135deg, #0f766e, #2dd4bf); box-shadow: 0 0 18px var(--accent-glow);
 }
-.brand-name { font-weight: 700; letter-spacing: .2px; }
+.brand-name { font-weight: 800; letter-spacing: 1.6px; font-size: 15px; }
 .brand-name small { display: block; color: var(--muted); font-weight: 500; font-size: 11px; letter-spacing: .6px; text-transform: uppercase; }
 .nav a {
   display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px;
@@ -253,12 +256,13 @@ td.r, th.r { text-align: right; }
   <aside class="side">
     <div class="brand">
       <div class="brand-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#031412" stroke-width="2.6" stroke-linecap="round"><path d="M4 18l5-6 4 3 7-9"/></svg></div>
-      <div class="brand-name">Prometheus<small>Kalshi desk</small></div>
+      <div class="brand-name">PROMETHEUS</div>
     </div>
     <nav class="nav" id="nav">
       <a href="#overview" data-page="overview"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>Overview</a>
       <a href="#trades" data-page="trades"><svg viewBox="0 0 24 24"><path d="M7 7h13M7 12h13M7 17h13M3 7h.01M3 12h.01M3 17h.01"/></svg>Trades &amp; positions</a>
       <a href="#weather" data-page="weather"><svg viewBox="0 0 24 24"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6 2A3.5 3.5 0 0 0 6.5 19z"/></svg>Weather</a>
+      <a href="#inflation" data-page="inflation"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg>Inflation</a>
       <a href="#research" data-page="research"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.5 18.5A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-2.5L14 9V3"/></svg>Research &amp; paper</a>
       <a href="#risk" data-page="risk"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>Portfolio &amp; risk</a>
       <a href="#system" data-page="system"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>System health</a>
@@ -292,10 +296,12 @@ td.r, th.r { text-align: right; }
       <section class="page" id="page-overview">
         <div class="grid g-5" id="kpis"></div>
         <div class="spacer"></div>
+        <div class="grid g-3" id="bots"></div>
+        <div class="spacer"></div>
         <div class="grid g-21">
           <div class="card glow">
             <div class="card-head">
-              <div><h3><span class="sw" style="background:var(--s1)"></span>Weather + Arbitrage bot <span class="hint mono">kalshibot · demo</span></h3>
+              <div><h3><span class="sw" style="background:var(--brand-line)"></span>All strategies <span class="hint mono">kalshibot · demo · one account</span></h3>
                 <p class="desc">Realised P&amp;L over time, from fills and settlements recorded in the journal.</p></div>
               <div class="right" id="bot-state-chip"></div>
             </div>
@@ -304,7 +310,7 @@ td.r, th.r { text-align: right; }
           </div>
           <div class="card">
             <div class="card-head">
-              <div><h3><span class="sw" style="background:var(--s3)"></span>Live paper account</h3>
+              <div><h3><span class="sw" style="background:var(--paper)"></span>Live paper account</h3>
                 <p class="desc">Fake money on <b>production</b> prices. Same pricing code as the live strategy.</p></div>
               <div class="right"><span class="chip accent">No orders</span></div>
             </div>
@@ -336,7 +342,7 @@ td.r, th.r { text-align: right; }
       <section class="page" id="page-trades">
         <div class="page-head"><div><h2>Trades &amp; positions</h2>
           <p>Every submission, fill and settlement, with the fees recorded against it; open positions from the journal next to what Kalshi reports.</p></div>
-          <div class="seg" id="seg-strategy"><button class="on" data-v="all">All</button><button data-v="Weather">Weather</button><button data-v="Arbitrage">Arbitrage</button></div></div>
+          <div class="seg" id="seg-strategy"><button class="on" data-v="all">All</button><button data-v="Weather">Weather</button><button data-v="Inflation">Inflation</button><button data-v="Arbitrage">Arbitrage</button></div></div>
         <div class="grid g-4" id="trade-kpis"></div>
         <div class="spacer"></div>
         <div class="grid g-2">
@@ -367,6 +373,22 @@ td.r, th.r { text-align: right; }
           <div class="card"><h3>Why markets were rejected · 24h</h3><p class="desc">Top reasons in the opportunity ledger.</p><div class="chart" id="ch-reasons"></div></div>
           <div class="card"><h3>Station bias</h3><p class="desc">Forecast minus the official high, in °F, per station.</p><div class="tbl" id="tbl-bias"></div></div>
         </div>
+      </section>
+
+      <!-- ================================================= INFLATION -->
+      <section class="page" id="page-inflation">
+        <div class="page-head"><div><h2>Inflation nowcasts</h2>
+          <p>Kalshi CPI, core CPI and PCE ladders priced from the Cleveland Fed nowcast and an internal weighted nowcast, next to where the market is pricing them. Settles on the first one-decimal BLS / BEA print, strictly above the strike.</p></div>
+          <div class="right" id="infl-bot-state"></div></div>
+        <div class="grid g-4" id="infl-kpis"></div>
+        <div class="spacer"></div>
+        <div class="card"><h3>Latest nowcasts</h3><p class="desc">Per series and target month: the Cleveland Fed's latest value, our blended estimate and its measured uncertainty. A regime flag means the nowcast moved sharply over its last five readings.</p><div class="tbl" id="tbl-nowcasts"></div></div>
+        <div class="spacer"></div>
+        <div class="card"><h3>Model vs market, strike by strike</h3><p class="desc">P(published figure above the strike): our model as the line, the market mid as dots (demo, and production where recorded). Where the line sits above the dots, the model thinks YES is underpriced.</p>
+          <div class="grid g-3" id="ladders"></div>
+          <div class="legend"><span><span class="sw" style="background:var(--s3)"></span>model</span><span><span class="sw" style="background:var(--s1)"></span>production mid</span><span><span class="sw" style="background:#8793a0"></span>demo mid</span></div></div>
+        <div class="spacer"></div>
+        <div class="card"><h3>How the model was fitted</h3><p class="desc">Out-of-sample Brier score on months the fit never saw (lower is better), measured error distribution vs a normal curve. From scripts/fit_inflation_model.py.</p><div class="tbl" id="tbl-fit"></div></div>
       </section>
 
       <!-- ================================================= RESEARCH -->
@@ -469,7 +491,8 @@ function table(cols, rows, emptyText = "Nothing yet.") {
 function kpi(label, value, foot = "", valueClass = "") {
   return `<div class="card kpi"><div class="label">${label}</div><div class="value ${valueClass}">${value}</div><div class="foot">${foot}</div></div>`;
 }
-const stratSw = s => `<span class="sw" style="background:${s === "Weather" ? "var(--s1)" : "var(--s2)"}"></span>`;
+const STRAT_COLOR = { Weather: "var(--s1)", Arbitrage: "var(--s2)", Inflation: "var(--s3)" };
+const stratSw = s => `<span class="sw" style="background:${STRAT_COLOR[s] || "var(--s2)"}"></span>`;
 const statusChip = (state) => {
   const m = { AHEAD: "good", BEHIND: "bad", EVEN: "", UNPROVEN: "" };
   return chip(state, m[state] ?? "");
@@ -681,7 +704,7 @@ function renderOverview() {
     kpi("Realised P&amp;L", `<span class="${cls(p.realised)}">${sgnUsd(p.realised)}</span>`, `<span class="delta ${cls(p.today)}">${sgnUsd(p.today)}</span> today · <span class="delta ${cls(p.last_7d)}">${sgnUsd(p.last_7d)}</span> 7d`),
     kpi("Win rate", pct(p.win_rate, 1), `${p.wins ?? "—"} of ${p.closed ?? "—"} closed positions`),
     kpi("Open positions", String(openRows.length), `${usd(p.open_cost)} deployed${ex.ok ? ` · Kalshi ${ex.positions.length}` : ""}`),
-    kpi(`<span class="sw" style="background:var(--s3)"></span>Paper · production`, usd(pa.equity), `<span class="delta ${cls(pa.realised)}">${sgnUsd(pa.realised)}</span> realised · ${(pa.open || []).length} open`),
+    kpi(`<span class="sw" style="background:var(--paper)"></span>Paper · production`, usd(pa.equity), `<span class="delta ${cls(pa.realised)}">${sgnUsd(pa.realised)}</span> realised · ${(pa.open || []).length} open`),
   ].join("");
   const svc = ((SNAP.system || {}).services || []).find(x => x.name === "kalshibot") || {};
   $("#bot-state-chip").innerHTML = svc.active === "active" ? chip("● Running", "good") : chip(svc.active || "unknown", "bad");
@@ -693,12 +716,12 @@ function renderOverview() {
     ["Fees paid", usd(p.fees), "all fills"],
     ["Priced last pass", String((core.health || {}).last_scan_priced ?? "—"), agoT((core.health || {}).last_scan)],
   ].map(([l, v, f]) => `<div><div class="hint">${l}</div><div style="font:600 17px Inter;margin-top:2px" class="num">${v}</div><div class="hint">${f}</div></div>`).join("");
-  areaChart($("#ch-pnl"), p.series, { color: "var(--s3)", fmt: v => sgnUsd(v), baseline: 0, label: "cumulative realised P&L" });
+  areaChart($("#ch-pnl"), p.series, { color: "var(--brand-line)", fmt: v => sgnUsd(v), baseline: 0, label: "cumulative realised P&L" });
   const allowed = pa.allowed || {}, blocked = pa.blocked || {};
   $("#paper-mini").innerHTML = `<div class="grid g-2" style="gap:10px;margin-bottom:8px">
      <div><div class="hint">Equity</div><div class="num" style="font:700 22px Inter">${usd(pa.equity)}</div><div class="hint">cash ${usd(pa.cash)}</div></div>
      <div><div class="hint">Settled</div><div class="num" style="font:700 22px Inter">${(allowed.settled || 0) + (blocked.settled || 0) + ((pa.arb || {}).settled || 0)}</div><div class="hint">${(pa.open || []).length} open</div></div></div>`;
-  areaChart($("#ch-paper"), (pa.series || []).length ? [{ t: (pa.series[0].t || 0) - 3600, v: pa.starting }, ...pa.series] : [], { color: "var(--s3)", baseline: pa.starting, label: "paper equity" });
+  areaChart($("#ch-paper"), (pa.series || []).length ? [{ t: (pa.series[0].t || 0) - 3600, v: pa.starting }, ...pa.series] : [], { color: "var(--paper)", baseline: pa.starting, label: "paper equity" });
   // recent trades
   const legs = ((SNAP.trades || {}).legs || []).filter(l => (l.filled || 0) > 0).slice(0, 10);
   $("#tbl-recent-trades").innerHTML = errBox("trades") + table([
@@ -782,7 +805,111 @@ function renderTrades() {
     { h: "P&L", r: 1, f: r => `<span class="num ${cls(r.pnl)}">${sgnUsd(r.pnl)}</span>` },
   ], pm, "Nothing closed yet.");
 }
-const strategyOf = t => (t || "").toUpperCase().startsWith("KXHIGH") ? "Weather" : "Arbitrage";
+const strategyOf = t => { const u = (t || "").toUpperCase(); return u.startsWith("KXHIGH") ? "Weather" : (u.startsWith("KXCPI") || u.startsWith("KXPCE")) ? "Inflation" : "Arbitrage"; };
+
+// ----------------------------------------------------------- strategy cards
+const BOTS = [
+  { label: "Weather", name: "weather_temperature", title: "Weather Bot", sub: "Kalshi daily-high markets · NWS / ensemble / HRRR nowcast", icon: '<path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6 2A3.5 3.5 0 0 0 6.5 19z"/>' },
+  { label: "Inflation", name: "inflation_nowcast", title: "Inflation Bot", sub: "CPI · core CPI · PCE ladders · Cleveland Fed nowcast", icon: '<path d="M3 17l6-6 4 4 8-8M15 7h6v6"/>' },
+  { label: "Arbitrage", name: "arbitrage", title: "Arbitrage", sub: "Structural mispricings across related markets", icon: '<path d="M7 7h10M7 17h10M4 12h16"/>' },
+];
+function renderBots() {
+  const p = SNAP.pnl || {}, d = ((SNAP.decisions || {}).by_strategy_24h) || {}, paused = SNAP.paused || {};
+  const svc = ((SNAP.system || {}).services || []).find(x => x.name === "kalshibot") || {};
+  const core = SNAP.core || {};
+  $("#bots").innerHTML = BOTS.map(b => {
+    const s = (p.by_strategy || []).find(x => x.strategy === b.label) || { pnl: 0, closed: 0, wins: 0 };
+    const dd = d[b.label] || { evaluated: 0, accepted: 0, traded: 0 };
+    const open = (core.open || []).filter(o => o.qty > 0 && strategyOf(o.ticker) === b.label).length;
+    const isPaused = !!paused[b.name], running = svc.active === "active";
+    const state = !running ? chip("Stopped", "bad") : isPaused ? chip("Paused", "warn") : chip("● Running", "good");
+    return `<div class="card">
+      <div class="card-head"><div class="flex" style="flex-wrap:nowrap"><div class="brand-mark" style="width:30px;height:30px;background:${STRAT_COLOR[b.label]};box-shadow:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2">${b.icon}</svg></div>
+        <div><h3>${b.title}</h3><div class="sub2">${b.sub}</div></div></div><div class="right">${state}</div></div>
+      <div class="grid g-3" style="gap:8px;margin:12px 0 10px">
+        <div><div class="hint">Realised</div><div class="num ${cls(s.pnl)}" style="font:700 18px Inter">${sgnUsd(s.pnl)}</div><div class="hint">${s.closed} closed · ${s.closed ? pct(s.wins / s.closed, 0) : "—"} won</div></div>
+        <div><div class="hint">Open</div><div class="num" style="font:700 18px Inter">${open}</div><div class="hint">positions</div></div>
+        <div><div class="hint">24h decisions</div><div class="num" style="font:700 18px Inter">${dd.evaluated.toLocaleString()}</div><div class="hint">${dd.accepted} accepted · ${dd.traded} traded</div></div></div>
+      <div class="flex" style="justify-content:space-between"><span class="hint">${isPaused ? "No new entries; still pricing and managing positions." : "Opening positions when its gates allow."}</span>
+        <button class="btn ${isPaused ? "primary" : ""} btn-pause" data-name="${b.name}" data-paused="${isPaused ? 1 : 0}">${isPaused ? "Resume" : "Pause entries"}</button></div></div>`;
+  }).join("");
+  document.querySelectorAll(".btn-pause").forEach(btn => btn.onclick = async () => {
+    const want = btn.dataset.paused !== "1", name = btn.dataset.name;
+    const ok = await confirmBox(want
+      ? { title: `Pause ${name}?`, text: "No new positions from this strategy until resumed. It keeps pricing, recording and managing what it already holds. The other strategies are unaffected.", ok: "Pause entries", danger: true }
+      : { title: `Resume ${name}?`, text: "This strategy may open positions again, whenever its gates allow.", ok: "Resume" });
+    if (!ok) return;
+    await withBusy(btn, async () => {
+      try { const j = await post("/api/control/pause", { strategy: name, paused: want }); toast(want ? "Paused" : "Resumed", j.detail, "good"); }
+      catch (e) { toast("Could not change it", e.message, "bad"); }
+      await load(true);
+    });
+  });
+}
+
+// ----------------------------------------------------------- inflation page
+function ladder(host, ev) {
+  host.innerHTML = "";
+  const pts = ev.points || [];
+  if (!pts.length) { host.innerHTML = empty("No prices yet."); return; }
+  const W = host.clientWidth || 360, H = 200, m = { l: 38, r: 10, t: 10, b: 28 };
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, height: H }, host);
+  const lo = Math.min(...pts.map(p => p.strike)), hi = Math.max(...pts.map(p => p.strike));
+  const X = k => m.l + (W - m.l - m.r) * (hi === lo ? .5 : (k - lo) / (hi - lo)), Y = v => m.t + (H - m.t - m.b) * (1 - v);
+  const ax = svgEl("g", { class: "axis" }, svg);
+  for (const v of [0, .5, 1]) { svgEl("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: "gridline" }, ax); const t = svgEl("text", { x: m.l - 6, y: Y(v) + 3.5, "text-anchor": "end" }, ax); t.textContent = (v * 100) + "%"; }
+  const every = Math.max(1, Math.ceil(pts.length / 6));
+  pts.forEach((p, i) => { if (i % every === 0 || i === pts.length - 1) { const t = svgEl("text", { x: X(p.strike), y: H - 8, "text-anchor": "middle" }, ax); t.textContent = ">" + p.strike + "%"; } });
+  svgEl("path", { d: pts.map((p, i) => (i ? "L" : "M") + X(p.strike) + " " + Y(p.model)).join(""), fill: "none", stroke: "var(--s3)", "stroke-width": 2 }, svg);
+  pts.forEach(p => {
+    for (const [key, color, r] of [["demo", "#8793a0", 3.5], ["prod", "var(--s1)", 4.5]]) {
+      if (p[key] === null || p[key] === undefined) continue;
+      const c = svgEl("circle", { cx: X(p.strike), cy: Y(p[key]), r, fill: color, stroke: "var(--panel)", "stroke-width": 1.5 }, svg);
+      c.addEventListener("mousemove", e => showTip(`<b>above ${p.strike}%</b>model ${pct(p.model)} · ${key === "prod" ? "production" : "demo"} ${pct(p[key])}`, e.clientX, e.clientY));
+      c.addEventListener("mouseleave", hideTip);
+    }
+  });
+}
+function renderInflation() {
+  const inf = SNAP.inflation || {}, st = inf.status || {}, series = st.series || {};
+  const paused = (SNAP.paused || {}).inflation_nowcast;
+  $("#infl-bot-state").innerHTML = paused ? chip("Paused", "warn") : chip("Active", "good");
+  const rows = [];
+  for (const [ser, targets] of Object.entries(series)) for (const [tgt, v] of Object.entries(targets)) rows.push({ ser, tgt, ...v });
+  rows.sort((a, b) => (a.ser + a.tgt).localeCompare(b.ser + b.tgt));
+  const near = rows.filter(r => r.source === "blend");
+  const regime = rows.filter(r => r.regime_shift).length;
+  const fit = inf.fit || {};
+  $("#infl-kpis").innerHTML = errBox("inflation") + [
+    kpi(`<span class="sw" style="background:var(--s3)"></span>Series priced`, String(Object.keys(series).length), `${rows.length} target months`),
+    kpi("With a Cleveland nowcast", String(near.length), "months close enough to trade"),
+    kpi("Regime flags", String(regime), regime ? chip("confidence cut", "warn") : "none"),
+    kpi("Model fitted", fit.fitted_at ? localTime(fit.fitted_at) : "not yet", fit.since ? "on the archive since " + esc(fit.since) : "defaults until fitted"),
+  ].join("");
+  const f3 = v => n(v) === null ? "—" : (+v).toFixed(2) + "%";
+  $("#tbl-nowcasts").innerHTML = table([
+    { h: "Series", f: r => `<span class="flex">${stratSw("Inflation")}<span class="ticker">${esc(r.ser)}</span></span><div class="sub2">${esc(r.measure)} · ${r.freq === "mom" ? "month over month" : "year over year"}</div>` },
+    { h: "Month", f: r => `<span class="mono">${esc(r.tgt)}</span>` },
+    { h: "Cleveland", r: 1, f: r => `<span class="num">${f3(r.cleveland)}</span><div class="sub2">${esc(r.cleveland_date || "")}</div>` },
+    { h: "Ours", r: 1, f: r => `<b class="num">${f3(r.mu)}</b>` },
+    { h: "± error", r: 1, f: r => `<span class="num">${n(r.sigma) === null ? "—" : (+r.sigma).toFixed(2)}</span><div class="sub2">${esc(r.distribution || "")}</div>` },
+    { h: "Model", f: r => chip(r.source, r.source === "blend" ? "accent" : "") },
+    { h: "Release in", r: 1, f: r => `<span class="num">${n(r.days_to_release) === null ? "—" : (+r.days_to_release).toFixed(1) + "d"}</span>` },
+    { h: "Regime", f: r => r.regime_shift ? chip(`moved ${(+r.regime_delta).toFixed(2)}pt`, "warn") : `<span class="hint">steady</span>` },
+  ], rows, "The inflation strategy has not priced anything yet (it runs every 10 minutes).");
+  const evs = inf.events || [];
+  $("#ladders").innerHTML = evs.length ? evs.slice(0, 9).map((e, i) => `<div class="card" style="padding:12px 14px"><div class="flex" style="justify-content:space-between"><b class="ticker">${esc(e.event)}</b><span class="hint">${esc(e.target || "")} · ${n(e.lead_hours) === null ? "" : (e.lead_hours / 24).toFixed(0) + "d to close"}</span></div><div class="chart" id="ladder-${i}" style="height:200px"></div></div>`).join("")
+    : empty("No inflation prices recorded in the last 36 hours yet.");
+  evs.slice(0, 9).forEach((e, i) => ladder($("#ladder-" + i), e));
+  const fs = (fit.series || {});
+  $("#tbl-fit").innerHTML = table([
+    { h: "Measure", f: r => `<span class="mono">${esc(r.k)}</span>` },
+    { h: "Archive rows", r: 1, f: r => `<span class="num">${(r.rows || 0).toLocaleString()}</span>` },
+    { h: "Brier (out of sample)", r: 1, f: r => `<span class="num">${n(r.brier_oos) === null ? "—" : r.brier_oos.toFixed(4)}</span>` },
+    { h: "Normal curve", r: 1, f: r => `<span class="num sub2">${n(r.brier_normal) === null ? "—" : r.brier_normal.toFixed(4)}</span>` },
+    { h: "", f: r => n(r.brier_oos) !== null && n(r.brier_normal) !== null && r.brier_oos <= r.brier_normal ? chip("measured beats normal", "good") : "" },
+  ], Object.entries(fs).map(([k, v]) => ({ k, ...v })), "Not fitted yet - run scripts/fit_inflation_model.py.");
+}
 
 function renderWeather() {
   const w = SNAP.weather || {}, core = SNAP.core || {};
@@ -835,12 +962,12 @@ function renderWeather() {
 function renderResearch() {
   const pa = SNAP.paper || {}, al = pa.allowed || {}, bl = pa.blocked || {}, ar = pa.arb || {};
   $("#paper-kpis").innerHTML = errBox("paper") + [
-    kpi(`<span class="sw" style="background:var(--s3)"></span>Paper equity`, usd(pa.equity), `started ${usd(pa.starting, 0)} · cash ${usd(pa.cash)}`),
+    kpi(`<span class="sw" style="background:var(--paper)"></span>Paper equity`, usd(pa.equity), `started ${usd(pa.starting, 0)} · cash ${usd(pa.cash)}`),
     kpi("Realised", `<span class="${cls(pa.realised)}">${sgnUsd(pa.realised)}</span>`, `${(al.settled || 0) + (bl.settled || 0) + (ar.settled || 0)} settled positions`),
     kpi("Open", String((pa.open || []).length), `${usd(pa.tied)} tied up`),
     kpi("Win rate", (() => { const s = (al.settled || 0) + (bl.settled || 0) + (ar.settled || 0), wn = (al.wins || 0) + (bl.wins || 0) + (ar.wins || 0); return s ? pct(wn / s) : "—"; })(), "settled positions"),
   ].join("");
-  areaChart($("#ch-paper-big"), (pa.series || []).length ? [{ t: (pa.series[0].t || 0) - 3600, v: pa.starting }, ...pa.series] : [], { color: "var(--s3)", baseline: pa.starting, label: "paper equity" });
+  areaChart($("#ch-paper-big"), (pa.series || []).length ? [{ t: (pa.series[0].t || 0) - 3600, v: pa.starting }, ...pa.series] : [], { color: "var(--paper)", baseline: pa.starting, label: "paper equity" });
   const split = (name, x, note) => `<div style="padding:10px 0;border-bottom:1px solid var(--border)"><div class="flex" style="justify-content:space-between"><b>${name}</b><span class="num ${cls(x.pnl)}">${sgnUsd(x.pnl || 0)}</span></div>
     <div class="hint">${x.settled || 0} settled · ${x.wins || 0} won · ${x.open || 0} open · strategy expected ${sgnUsd(x.expected || 0)}</div><div class="hint">${note}</div></div>`;
   $("#paper-split").innerHTML = split("Allowed by the gate", al, "What the live strategy would actually trade, at real prices.") +
@@ -909,8 +1036,8 @@ function renderRisk() {
   const openRows = (core.open || []).filter(x => x.qty > 0);
   const byS = {}; openRows.forEach(o => { const s = strategyOf(o.ticker); byS[s] = (byS[s] || 0) + Math.max(0, o.cost); });
   const cash = Math.max(0, (SNAP.account || {}).cash || 0);
-  donut($("#ch-alloc"), [{ label: "Cash", value: cash, color: "#55606b" }, { label: "Weather", value: byS.Weather || 0, color: "var(--s1)" }, { label: "Arbitrage", value: byS.Arbitrage || 0, color: "var(--s2)" }],
-    { center: usd(cash + (byS.Weather || 0) + (byS.Arbitrage || 0), 0), sub: "cash + open cost" });
+  donut($("#ch-alloc"), [{ label: "Cash", value: cash, color: "#55606b" }, { label: "Weather", value: byS.Weather || 0, color: "var(--s1)" }, { label: "Inflation", value: byS.Inflation || 0, color: "var(--s3)" }, { label: "Arbitrage", value: byS.Arbitrage || 0, color: "var(--s2)" }],
+    { center: usd(cash + (byS.Weather || 0) + (byS.Inflation || 0) + (byS.Arbitrage || 0), 0), sub: "cash + open cost" });
   const fc = r.forecast || {}, ms = r.market_skill || {};
   const kv = (k, v) => `<div class="meter-row" style="margin:6px 0"><span class="t">${k}</span><span class="num">${v}</span></div>`;
   $("#rules").innerHTML = kv("Market-skill gate", esc(ms.require || "—")) + kv("Scored since", esc(ms.since || "—")) +
@@ -968,13 +1095,13 @@ function renderSystem() {
 }
 
 // ----------------------------------------------------------- data + routing
-const PAGES = { overview: "Overview", trades: "Trades & positions", weather: "Weather activity", research: "Research & paper", risk: "Portfolio & risk", system: "System health" };
+const PAGES = { overview: "Overview", trades: "Trades & positions", weather: "Weather activity", inflation: "Inflation nowcasts", research: "Research & paper", risk: "Portfolio & risk", system: "System health" };
 function currentPage() { const h = location.hash.replace("#", ""); return PAGES[h] ? h : "overview"; }
 function renderAll() {
   if (!SNAP) return;
   renderPills(); renderSideFoot(); renderBanners();
   const pg = currentPage();
-  const fns = { overview: renderOverview, trades: renderTrades, weather: renderWeather, research: renderResearch, risk: renderRisk, system: renderSystem };
+  const fns = { overview: () => { renderOverview(); renderBots(); }, trades: renderTrades, weather: renderWeather, inflation: renderInflation, research: renderResearch, risk: renderRisk, system: renderSystem };
   try { fns[pg](); } catch (e) { console.error(e); toast("Render problem", String(e), "bad"); }
 }
 function route() {

@@ -7,7 +7,9 @@ what kept a retired engine alive by accident.
 """
 from __future__ import annotations
 
+from .inflation import InflationNowcastEstimator
 from .weather import WeatherTemperatureEstimator
+from ..econdata import EconData
 from ..sources import nws_user_agent
 from ..weatherdata import WeatherData
 
@@ -20,5 +22,12 @@ ESTIMATORS = {
             cross_check=bool(s.get("sources.cross_check_forecasts", True)),
             user_agent=nws_user_agent(s.section("sources")),
         ),
+    ),
+    # Second strategy of the same account: Kalshi CPI / core CPI / PCE
+    # markets against the Cleveland Fed nowcast (kalshibot/estimators/inflation.py).
+    "inflation_nowcast": lambda s: InflationNowcastEstimator(
+        s.section("inflation"),
+        EconData(user_agent=nws_user_agent(s.section("sources")),
+                 cache_seconds=float(s.get("inflation.cache_seconds", 3600))),
     ),
 }

@@ -169,6 +169,24 @@ def make_handler(state: State):
                 ok = r.returncode == 0
                 audit("reset-breaker", ok, (r.stdout + r.stderr).strip(), by)
                 self._json(200 if ok else 500, {"ok": ok, "detail": (r.stdout + r.stderr).strip()})
+            elif path == "/api/control/pause":
+                # Pause or resume ONE strategy's new entries. The bot keeps
+                # pricing, recording and managing what it holds; it reads
+                # this file every few seconds (ArbitrageEngine.paused_strategies).
+                name = str(body.get("strategy") or "")
+                if name not in api.STRATEGIES.values():
+                    self._json(400, {"ok": False, "error": f"unknown strategy {name!r}"})
+                    return
+                want = bool(body.get("paused"))
+                current = api.paused(CONTROL)
+                current[name] = want
+                from kalshibot.control import write_status
+                write_status(CONTROL / "paused.json", {"paused": current, "at": time.time(),
+                                                       "by": by})
+                state.snapshot(force=True)
+                audit("pause" if want else "resume", True, name, by)
+                self._json(200, {"ok": True, "detail": f"{name} "
+                                 f"{'paused - no new entries' if want else 'resumed'}"})
             elif path == "/api/control/audit":
                 # The Mac helper records what it did with the service here, so
                 # there is one audit trail.

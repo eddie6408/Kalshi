@@ -65,8 +65,88 @@ def _ts(value) -> float | None:
         return None
 
 
+INFLATION_PREFIXES = ("KXCPI", "KXPCE")
+#: dashboard label -> the strategy name the engine and the pause file use
+STRATEGIES = {"Weather": "weather_temperature", "Inflation": "inflation_nowcast",
+              "Arbitrage": "arbitrage"}
+
+
 def strategy_of(ticker: str) -> str:
-    return "Weather" if (ticker or "").upper().startswith("KXHIGH") else "Arbitrage"
+    t = (ticker or "").upper()
+    if t.startswith("KXHIGH"):
+        return "Weather"
+    if t.startswith(INFLATION_PREFIXES):
+        return "Inflation"
+    return "Arbitrage"
+
+
+def paused(control_dir: Path | None = None) -> dict:
+    try:
+        base = control_dir or (ROOT / "data" / "control")
+        raw = json.loads((base / "paused.json").read_text(encoding="utf-8"))
+        return {k: bool(v) for k, v in (raw.get("paused") or {}).items()}
+    except (OSError, ValueError):
+        return {}
+
+
+def strike_of(ticker: str) -> float | None:
+    from kalshibot.inflation_model import split_threshold
+    return split_threshold(ticker)[1]
+
+
+def event_of(ticker: str) -> str:
+    from kalshibot.inflation_model import split_threshold
+    return split_threshold(ticker)[0]
+
+
+def inflation(conn) -> dict:
+    """The Inflation page: the estimator's latest nowcasts (status file) and,
+    per event, our probability for each strike beside the market's."""
+    status = {}
+    try:
+        status = json.loads((ROOT / "data" / "control" / "inflation.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    since = (datetime.now(timezone.utc) - timedelta(hours=36)).isoformat()
+    rows_ = rows(conn, "SELECT ticker, series, target_date, our_probability p, model, "
+                       "market_yes_cents da, market_yes_bid_cents db, prod_yes_ask_cents pa, "
+                       "prod_yes_bid_cents pb, lead_hours, ts FROM probability_log "
+                       "WHERE estimator='inflation_nowcast' AND ts >= ? ORDER BY id", since)
+    latest: dict[str, dict] = {}
+    for r in rows_:
+        latest[r["ticker"]] = r
+    events: dict[str, dict] = {}
+    for t, r in latest.items():
+        k = strike_of(t)
+        if k is None:
+            continue
+        ev = events.setdefault(event_of(t), {
+            "event": event_of(t), "series": r["series"], "target": r["target_date"],
+            "lead_hours": r["lead_hours"], "model": r["model"], "points": []})
+        mid = ((r["da"] + r["db"]) / 200.0) if r["da"] is not None and r["db"] is not None else None
+        pmid = ((r["pa"] + r["pb"]) / 200.0) if r["pa"] is not None and r["pb"] is not None else None
+        ev["points"].append({"strike": k, "model": r["p"], "demo": mid, "prod": pmid})
+    out = []
+    for ev in events.values():
+        ev["points"].sort(key=lambda p: p["strike"])
+        out.append(ev)
+    out.sort(key=lambda e: (e["lead_hours"] if e["lead_hours"] is not None else 1e9))
+    return {"status": status, "events": out[:12],
+            "fit": _fit_summary()}
+
+
+def _fit_summary() -> dict | None:
+    try:
+        raw = json.loads((ROOT / "data" / "inflation_model.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    out = {"fitted_at": raw.get("fitted_at"), "since": raw.get("since"), "series": {}}
+    for k, rep in (raw.get("report") or {}).items():
+        oos = rep.get("out_of_sample") or {}
+        out["series"][k] = {"brier_oos": oos.get("brier"), "n_oos": oos.get("n"),
+                            "brier_normal": rep.get("out_of_sample_normal_brier"),
+                            "rows": (rep.get("fit") or {}).get("n")}
+    return out
 
 
 def load_config() -> dict:
@@ -228,7 +308,20 @@ def decisions(conn) -> dict:
     reasons = rows(conn, "SELECT COALESCE(rejection_reason,'') reason, decision_stage stage, "
                          "COUNT(*) n FROM opportunity_ledger WHERE detected_at >= ? AND "
                          "decision='REJECTED' GROUP BY reason ORDER BY n DESC LIMIT 12", since)
-    return {"recent": recent, "stages_24h": stages, "reasons_24h": reasons}
+    per = rows(conn, "SELECT strategy, COUNT(*) n, SUM(decision='ACCEPTED') acc, "
+                     "SUM(final_state IN ('FILLED','PARTIALLY_FILLED','EXITED','SETTLED')) traded "
+                     "FROM opportunity_ledger WHERE detected_at >= ? GROUP BY strategy", since)
+    by_strategy: dict[str, dict] = {}
+    for r in per:
+        st = str(r["strategy"] or "")
+        label = ("Weather" if "weather" in st else "Inflation" if "inflation" in st
+                 else "Arbitrage")
+        b = by_strategy.setdefault(label, {"evaluated": 0, "accepted": 0, "traded": 0})
+        b["evaluated"] += r["n"] or 0
+        b["accepted"] += r["acc"] or 0
+        b["traded"] += r["traded"] or 0
+    return {"recent": recent, "stages_24h": stages, "reasons_24h": reasons,
+            "by_strategy_24h": by_strategy}
 
 
 def model_vs_market(conn) -> dict:
@@ -490,6 +583,9 @@ def snapshot(db_path: Path, exchange: Exchange | None = None) -> dict:
         sec("model_vs_market", lambda: model_vs_market(conn))
         sec("paper", lambda: paper(conn, cfg))
         sec("maker", lambda: maker(conn))
+        sec("inflation", lambda: inflation(conn))
+        out["paused"] = paused()
+        out["strategies"] = STRATEGIES
         p = out.get("pnl") or {}
         sec("risk", lambda: risk(conn, cfg, p.get("open_cost"), p.get("today")))
         sec("exchange", lambda: exchange.read() if exchange else None)

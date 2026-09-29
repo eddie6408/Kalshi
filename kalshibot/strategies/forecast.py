@@ -222,6 +222,10 @@ class ForecastStrategy:
         #: latest book for the benchmark. None = off.
         self.recorder = None
         self.production_watch = None
+        #: only watch markets this close to their close on production (None =
+        #: all): the inflation ladders run months ahead and would swamp the
+        #: request budget
+        self.watch_max_lead_hours = None
 
     @property
     def name(self) -> str:
@@ -231,10 +235,23 @@ class ForecastStrategy:
         fn = getattr(self.estimator, "candidate_series", None)
         return list(fn()) if callable(fn) else []
 
+    def _mine(self, m: Market) -> bool:
+        """Is this one of the estimator's own series? The exchange-wide sweep
+        hands every event to every strategy; pricing another strategy's
+        markets only wrote an "estimator declined" row for each of them.
+        An estimator that names no series sees everything, as before."""
+        series = getattr(self, "_series_cache", None)
+        if series is None:
+            series = self._series_cache = tuple(p.upper() for p in self.candidate_series())
+        if not series:
+            return True
+        name = (m.series_ticker or m.ticker).upper()
+        return any(name.startswith(p) for p in series)
+
     # ------------------------------------------------------------------
     def find(self, markets: list[Market], books: dict[str, DepthBook],
              bankroll_usd: float) -> list[ArbitrageOpportunity]:
-        tradable = [m for m in markets if m.ticker in books]
+        tradable = [m for m in markets if m.ticker in books and self._mine(m)]
         if not tradable:
             return []
 
@@ -298,6 +315,10 @@ class ForecastStrategy:
                                                    "b": book_levels(book)})
             if self.production_watch is None:
                 return
+            if self.watch_max_lead_hours is not None and m.close_time is not None:
+                hours = (m.close_time - datetime.now(timezone.utc)).total_seconds() / 3600
+                if hours > float(self.watch_max_lead_hours):
+                    return
             info = None
             if usable:
                 ev = est.evidence or {}
@@ -309,7 +330,8 @@ class ForecastStrategy:
                     reason = last.reason if last else ""
                     st = _ledger.stage_for(reason) if reason else None
                     stage = st.value if st else ("UNMAPPED" if reason else "")
-                info = {"q": est.probability_yes, "stage": stage, "reason": reason,
+                info = {"strategy": self.name,
+                        "q": est.probability_yes, "stage": stage, "reason": reason,
                         "lead": ev.get("lead_hours"), "conf": est.confidence,
                         # in memory only - the live paper account re-prices
                         # this exact market and estimate on the production book

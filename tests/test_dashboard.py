@@ -149,6 +149,49 @@ def test_the_server_guards_every_action():
             srv.CONTROL = old
 
 
+def test_pausing_a_strategy_writes_the_file_the_engine_reads():
+    with tempfile.TemporaryDirectory() as tmp:
+        old = srv.CONTROL
+        srv.CONTROL = Path(tmp) / "control"
+        try:
+            state = srv.State(_journal(tmp), "tok", exchange=False)
+            s, base = _serve(srv.make_handler(state))
+            code, _ = _req(base + "/api/control/pause", "POST", token="tok",
+                           body={"strategy": "inflation_nowcast", "paused": True})
+            assert code == 200
+            assert api.paused(srv.CONTROL) == {"inflation_nowcast": True}
+            _req(base + "/api/control/pause", "POST", token="tok",
+                 body={"strategy": "weather_temperature", "paused": True})
+            _req(base + "/api/control/pause", "POST", token="tok",
+                 body={"strategy": "inflation_nowcast", "paused": False})
+            assert api.paused(srv.CONTROL) == {"inflation_nowcast": False,
+                                                "weather_temperature": True}
+            assert _req(base + "/api/control/pause", "POST", token="tok",
+                        body={"strategy": "rm -rf", "paused": True})[0] == 400
+            assert _req(base + "/api/control/pause", "POST",
+                        body={"strategy": "arbitrage", "paused": True})[0] == 403
+            # and the engine sees exactly that
+            from kalshibot.arb_engine import ArbitrageEngine
+            e = ArbitrageEngine.__new__(ArbitrageEngine)
+
+            class S:
+                def path(self, dotted, default):
+                    return srv.CONTROL
+            e.s = S()
+            assert e.paused_strategies() == {"weather_temperature"}
+            s.shutdown()
+        finally:
+            srv.CONTROL = old
+
+
+def test_inflation_tickers_are_their_own_strategy():
+    assert api.strategy_of("KXCPI-26DEC-T0.3") == "Inflation"
+    assert api.strategy_of("KXPCECORE-26AUG-T0.2") == "Inflation"
+    assert api.strategy_of("KXHIGHNY-26SEP29-T70") == "Weather"
+    assert api.strategy_of("KXNFLTOTAL-26SEP28-45") == "Arbitrage"
+    assert api.strike_of("KXCPI-26DEC-T-0.1") == -0.1 and api.strike_of("X-B70.5") is None
+
+
 def test_host_checks():
     assert srv.host_ok("localhost:8790") and srv.host_ok("127.0.0.1:18790")
     assert srv.host_ok("[::1]:8790")

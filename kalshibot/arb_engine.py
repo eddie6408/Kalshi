@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -40,6 +41,14 @@ class TradingMode(str, Enum):
     SCAN_ONLY = "SCAN_ONLY"
     PAPER = "PAPER"
     DEMO_LIVE = "DEMO_LIVE"
+
+
+def strategy_name(op) -> str:
+    """Which strategy an opportunity belongs to: the estimator's name for a
+    forecast ("forecast:inflation_nowcast" -> "inflation_nowcast"), else
+    "arbitrage"."""
+    st = str(getattr(op, "strategy_type", "") or "")
+    return st.split(":", 1)[1] if st.startswith("forecast:") else "arbitrage"
 
 
 @dataclass
@@ -175,6 +184,9 @@ class ArbitrageEngine:
         #: buying the same market twice. A race there is not a glitch, it is
         #: the per-market limit quietly not applying.
         self._risk_lock = threading.RLock()
+        #: operator pauses from the dashboard (data/control/paused.json)
+        self._paused_at = 0.0
+        self._paused: set[str] = set()
         self.trade_times: list[datetime] = []
         #: Shared with the position worker so the scan and the exit path never
         #: trade the same ticker at the same moment.
@@ -199,7 +211,7 @@ class ArbitrageEngine:
         section = settings.section("forecast")
         if not section.get("enabled", False):
             return []
-        cfg = ForecastConfig.from_dict(section)
+        per = section.get("per_estimator") or {}
         out: list[ForecastStrategy] = []
         from .estimators.registry import ESTIMATORS
         for name in section.get("estimators", []) or []:
@@ -210,6 +222,12 @@ class ArbitrageEngine:
                 continue
             try:
                 ms_cfg = MarketSkillConfig.from_dict(settings.section("market_skill"))
+                # The shared rules, with this estimator's own overrides on
+                # top (forecast.per_estimator.<name>): six hours of lead time
+                # is right for a daily temperature and wrong for a monthly
+                # CPI print.
+                own = per.get(name) or {}
+                cfg = ForecastConfig.from_dict({**section, **own})
                 out.append(ForecastStrategy(
                     factory(settings), fees, cfg, journal=journal,
                     gates=GateConfig.from_dict(settings.get("sources.gates")),
@@ -217,6 +235,8 @@ class ArbitrageEngine:
                     market_skill=(MarketSkillGate(journal, ms_cfg, estimator=name)
                                   if journal is not None and ms_cfg.enabled
                                   else None)))
+                # How far out its markets are worth reading on production.
+                out[-1].watch_max_lead_hours = own.get("watch_max_lead_hours")
                 log.info("FORECAST  %s registered", name)
             except Exception as exc:  # noqa: BLE001
                 log.error("FORECAST  %s failed to start: %s", name, exc)
@@ -753,6 +773,11 @@ class ArbitrageEngine:
         # moment. Reading what we hold, deciding, and (after a fill)
         # remembering what we committed have to be one indivisible step -
         # otherwise both passes see the same empty allowance and both buy.
+        # The operator paused this strategy from the dashboard: it keeps
+        # pricing and recording, it opens nothing.
+        name = strategy_name(op)
+        if name in self.paused_strategies():
+            return False, f"{name} paused by the operator (dashboard)"
         with self._risk_lock:
             ok, why = self._market_exposure_ok(op)
             if not ok:
@@ -760,7 +785,76 @@ class ArbitrageEngine:
             ok, why = self._reentry_ok(op)
             if not ok:
                 return False, why
+            ok, why = self._conflict_ok(op)
+            if not ok:
+                return False, why
             return True, "ok"
+
+    def paused_strategies(self) -> set[str]:
+        """Read data/control/paused.json at most every five seconds. A file
+        that cannot be read pauses nothing (and says so in the log)."""
+        now = time.time()
+        if now - getattr(self, "_paused_at", 0.0) < 5.0:
+            return self._paused
+        self._paused_at = now
+        s = getattr(self, "s", None)
+        path = s.path("dashboard.control_dir", "data/control") / "paused.json" \
+            if hasattr(s, "path") else None
+        try:
+            if path is not None and path.exists():
+                raw = json.loads(path.read_text(encoding="utf-8") or "{}")
+                self._paused = {str(k) for k, v in (raw.get("paused") or {}).items() if v}
+            else:
+                self._paused = set()
+        except (OSError, ValueError) as exc:
+            log.warning("RISK  could not read the pause file: %s", exc)
+            self._paused = set()
+        return self._paused
+
+    def _conflict_ok(self, op: ArbitrageOpportunity) -> tuple[bool, str]:
+        """Would this position contradict one we already hold on the same
+        ladder? Holding YES on "above 0.4" and buying NO on "above 0.3"
+        needs the value to be above 0.4 AND at most 0.3: one of them must
+        lose, whatever happens. Checked for "greater"-type threshold ladders
+        (the inflation markets), where the strike says exactly what each side
+        needs; other market shapes are left to the exposure limits."""
+        for leg in op.legs:
+            new = self._threshold(leg.ticker)
+            if new is None:
+                continue
+            from .inflation_model import split_threshold
+            event = split_threshold(leg.ticker)[0]
+            for ticker, pos in list((getattr(self, "_positions", None) or {}).items()):
+                if ticker == leg.ticker or not ticker.startswith(event + "-") \
+                        or not getattr(pos, "contracts", 0):
+                    continue
+                held = self._threshold(ticker)
+                if held is None:
+                    continue
+                held_side = "yes" if pos.contracts > 0 else "no"
+                # YES on k needs value > k; NO on k needs value <= k.
+                lo = max([k for s_, k in ((leg.side, new), (held_side, held)) if s_ == "yes"],
+                         default=float("-inf"))
+                hi = min([k for s_, k in ((leg.side, new), (held_side, held)) if s_ == "no"],
+                         default=float("inf"))
+                if lo >= hi:
+                    return False, (f"position conflict: {leg.side.upper()} {leg.ticker} "
+                                   f"cannot win alongside the {held_side.upper()} held in "
+                                   f"{ticker}")
+        return True, "ok"
+
+    def _threshold(self, ticker: str) -> float | None:
+        try:
+            m = self.market.get_market(ticker)
+        except Exception:  # noqa: BLE001  (includes no market client at all)
+            return None
+        raw = getattr(m, "raw", None) or {}
+        if str(raw.get("strike_type") or "").lower() != "greater":
+            return None
+        try:
+            return float(raw.get("floor_strike"))
+        except (TypeError, ValueError):
+            return None
 
     def _reentry_ok(self, op: ArbitrageOpportunity) -> tuple[bool, str]:
         """Have we just been in this market?

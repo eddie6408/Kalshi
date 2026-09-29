@@ -81,12 +81,16 @@ class PaperConfig:
 class PaperLiveAccount:
     def __init__(self, journal, gate, clone=None, market_skill=None,
                  cfg: PaperConfig | None = None, clock=time.time,
-                 versions: dict | None = None):
-        """`clone` is a ForecastStrategy with no journal and no market-skill
-        gate, sharing the live strategy's estimator and config. `gate` is the
-        engine's ProfitabilityGate."""
+                 versions: dict | None = None, clones: dict | None = None):
+        """`clones` maps a strategy name to (ForecastStrategy with no journal
+        and no market-skill gate, sharing the live strategy's estimator and
+        config; that strategy's market-skill gate). `clone`/`market_skill`
+        is the single-strategy form. `gate` is the engine's ProfitabilityGate."""
         self.journal = journal
         self.gate = gate
+        self.clones = dict(clones or {})
+        if clone is not None and not self.clones:
+            self.clones[getattr(clone, "name", "forecast")] = (clone, market_skill)
         self.clone = clone
         self.market_skill = market_skill
         self.cfg = cfg or PaperConfig()
@@ -138,7 +142,12 @@ class PaperLiveAccount:
 
     # ---- forecast entries (ProductionWatch listener) ---------------------
     def on_book(self, ticker: str, quote, info: dict) -> None:
-        if not self.cfg.enabled or self.clone is None or not info:
+        if not self.cfg.enabled or not info or not self.clones:
+            return
+        name = info.get("strategy")
+        clone, skill = self.clones.get(name) or (next(iter(self.clones.values()))
+                                                 if name is None else (None, None))
+        if clone is None:
             return
         m, est = info.get("market"), info.get("estimate")
         if m is None or est is None or not getattr(est, "usable", False):
@@ -149,10 +158,10 @@ class PaperLiveAccount:
             st = self.state()
             if ticker in st["open_tickers"]:
                 return
-            self.clone.skips = []
-            op = self.clone._price_one(m, quote.book, max(0.0, st["cash"]), est)
+            clone.skips = []
+            op = clone._price_one(m, quote.book, max(0.0, st["cash"]), est)
             if op is None:
-                why = self.clone.skips[-1].reason if self.clone.skips else "declined"
+                why = clone.skips[-1].reason if clone.skips else "declined"
                 self._decline(why)
                 return
             decision = self.gate.evaluate(op)
@@ -160,8 +169,8 @@ class PaperLiveAccount:
                 self._decline(f"gate: {decision.reason.value}")
                 return
             blocked, why_blocked = False, ""
-            if self.market_skill is not None:
-                ok, why_blocked = self.market_skill.may_enter(
+            if skill is not None:
+                ok, why_blocked = skill.may_enter(
                     m.series_ticker or ticker.split("-")[0],
                     (est.evidence or {}).get("lead_hours"))
                 blocked = not ok

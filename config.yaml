@@ -389,6 +389,20 @@ forecast:
   # Which estimators to run. Names must exist in kalshibot/estimators/registry.py.
   estimators:
     - weather_temperature
+    # Second strategy of the same account (2026-09-29): Kalshi CPI / core CPI
+    # / PCE ladders against the Cleveland Fed nowcast. Same gates, limits,
+    # execution and journal; its own worker, clock and pause switch.
+    - inflation_nowcast
+  # Per-estimator overrides of the rules below. Six hours of lead time is
+  # right for a daily temperature and wrong for a monthly CPI print.
+  per_estimator:
+    inflation_nowcast:
+      # Trade only inside three weeks of the release, where the Cleveland
+      # nowcast exists and its measured error is smallest. Further months are
+      # still priced (trend model) and scored, never traded.
+      max_lead_hours: 504
+      # Read production books only for markets inside that window.
+      watch_max_lead_hours: 504
   # Fraction of full Kelly. Quarter-Kelly is the standard "I do not fully
   # trust my own model" setting. Raise it only after the calibration report
   # says the estimates are actually well calibrated.
@@ -868,6 +882,12 @@ workers:
     enabled: true
     interval_seconds: 900
 
+  # Inflation: the nowcast updates once a business day and the ladders are
+  # monthly, so every 10 minutes is plenty (230 markets per pass).
+  inflation_nowcast:
+    enabled: true
+    interval_seconds: 600
+
   # Scoring: what did the temperature actually DO?
   #
   # Fills forecasts.actual_f from NWS observations once a target day is over,
@@ -1073,6 +1093,53 @@ sources:
       structured: false
       read_by_bot: false
       notes: "Kalshi's named settlement source (series settlement_sources). No public API; it republishes the NWS climate report, which the bot reads at the origin instead."
+
+    # ---- inflation (2026-09-29) ----------------------------------------
+    cleveland_fed_nowcast:
+      publisher: "Federal Reserve Bank of Cleveland (Inflation Nowcasting)"
+      tier: 1
+      roles: [primary]
+      endpoint: "https://www.clevelandfed.org/-/media/files/webcharts/inflationnowcasting/nowcast_{kind}.json"
+      required_by: [inflation_nowcast]
+      # Updated each business day; older than four days is stale.
+      max_data_age_seconds: 345600
+      notes: "Daily CPI / core CPI / PCE / core PCE nowcasts, m/m and y/y, with every released value since 2013 - the model's input and its backtest."
+
+    fred:
+      publisher: "Federal Reserve Bank of St. Louis (FRED), redistributing BLS and BEA"
+      tier: 2
+      roles: [cross_check]
+      endpoint: "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
+      notes: "Keyless CSV index levels (CPIAUCSL, CPILFESL, PCEPI, PCEPILFE). Cross-checks the archive's latest released month and scores settled contracts."
+
+    bls_api:
+      publisher: "U.S. Bureau of Labor Statistics"
+      tier: 1
+      roles: [settlement, cross_check]
+      endpoint: "https://api.bls.gov/publicAPI/v1/timeseries/data/{series}"
+      notes: "Kalshi's CPI source agency. Public v1 API, keyless, rate-limited: read at most twice a day for the official one-decimal CPI prints."
+
+# ---------------------------------------------------------------------
+# INFLATION  (kalshibot/estimators/inflation.py, kalshibot/inflation_model.py)
+# ---------------------------------------------------------------------
+# Kalshi settles on the FIRST published figure, to one decimal, strictly
+# above the strike (rule PDFs CPI, CORECPI, YOYCPI, YOYCPICORE, COREPCE,
+# ECONSTATB; checked 2026-09-29): CPI and core CPI m/m seasonally adjusted,
+# y/y NOT seasonally adjusted (BLS); core PCE m/m (BEA). Later revisions do
+# not count.
+inflation:
+  series: [KXCPI, KXCPICORE, KXCPIYOY, KXCPICOREYOY, KXPCECORE, KXPCEHEAD]
+  # Fitted by scripts/fit_inflation_model.py on the Cleveland archive.
+  params_path: data/inflation_model.json
+  status_path: data/control/inflation.json
+  # The nowcast moving more than this (pct points) over five readings is a
+  # regime shift: confidence is cut and an alert is sent.
+  regime_threshold: 0.10
+  stale_nowcast_days: 4
+  # Cleveland archive vs FRED on the latest released month; beyond this the
+  # estimator declines (data conflict).
+  cross_check_tolerance: 0.05
+  cache_seconds: 3600
 
 # ---------------------------------------------------------------------
 # ALERTS  (package 14A phase 4 - kalshibot/alerts.py)
