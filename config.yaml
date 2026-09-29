@@ -403,6 +403,9 @@ forecast:
       max_lead_hours: 504
       # Read production books only for markets inside that window.
       watch_max_lead_hours: 504
+      # Look for markets up to 100 days out (the Oct-Dec ladders): priced and
+      # scored every pass so the record builds, never traded past 21 days.
+      discovery_max_hours: 2400
   # Fraction of full Kelly. Quarter-Kelly is the standard "I do not fully
   # trust my own model" setting. Raise it only after the calibration report
   # says the estimates are actually well calibrated.
@@ -1089,10 +1092,8 @@ sources:
       publisher: "The Weather Company"
       tier: 1
       roles: [settlement]
-      endpoint: "https://weather.com/kalshi"
-      structured: false
-      read_by_bot: false
-      notes: "Kalshi's named settlement source (series settlement_sources). No public API; it republishes the NWS climate report, which the bot reads at the origin instead."
+      endpoint: "https://weather.com/kalshi/api/climate/primary?date={date}"
+      notes: "Kalshi's named settlement source (rules: 'maximum temperature at <station> (CLINYC) according to The Weather Company'). Its climate portal serves the official daily reports as keyless JSON for all 39 Kalshi stations; read every scoring pass (kalshibot/settlement_check.py) and compared with the NWS climate report. 25-27 Sep: identical."
 
     # ---- inflation (2026-09-29) ----------------------------------------
     cleveland_fed_nowcast:

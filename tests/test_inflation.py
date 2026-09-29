@@ -287,3 +287,40 @@ def test_the_shipped_config_registers_the_inflation_strategy():
     assert per["max_lead_hours"] >= 24
     reg = raw["sources"]["registry"]
     assert "inflation_nowcast" in reg["cleveland_fed_nowcast"]["required_by"]
+
+
+# ------------------------------------------------------------ settlement checks
+def test_twc_reports_are_parsed_and_compared_with_the_climate_report():
+    from kalshibot.journal import Journal
+    from kalshibot.settlement_check import TWCSettlement, parse_twc_primary
+    payload = {"results": [
+        {"station": {"icao": "KNYC", "cliId": "NYC"}, "status": "official",
+         "data": {"maxTemp": 63, "minTemp": 58}},
+        {"station": {"icao": "KDEN", "cliId": "DEN"}, "status": "official",
+         "data": {"maxTemp": 84, "minTemp": 54}},
+        {"station": {"icao": "KMIA", "cliId": "MIA"}, "status": "preliminary",
+         "data": {"maxTemp": 89}},
+    ]}
+    rep = parse_twc_primary(payload)
+    assert rep["KNYC"] == {"status": "official", "cli": "NYC", "max": 63, "min": 58}
+    with tempfile.TemporaryDirectory() as tmp:
+        j = Journal(Path(tmp) / "j.db")
+        day = date(2026, 9, 27)
+        for loc, v in (("NYC", 63), ("DEN", 83)):
+            j.log_source_observation(source_id="nws_climate_report", data_type="official_daily_max_f",
+                                     subject="CLI" + loc, target_date=day.isoformat(), value=v)
+        t = TWCSettlement()
+        t.fetch = lambda d: rep if d == day else {}
+        stats = t.check(j.conn, {"KNYC": "NYC", "KDEN": "DEN", "KMIA": "MIA"},
+                        today=date(2026, 9, 28), days=1)
+        assert stats["matched"] == 1 and stats["mismatched"] == 1 and stats["pending"] == 1
+
+
+def test_official_inflation_figures_are_recomputed_like_bls():
+    from kalshibot.settlement_check import official_change
+    idx = {"2025-08": 320.0, "2026-07": 330.0, "2026-08": 331.1551}
+    raw, pub = official_change(idx, "2026-08", "mom")
+    assert pub == 0.4 and abs(raw - 0.35) < 0.01           # 331.155/330 - 1
+    raw, pub = official_change(idx, "2026-08", "yoy")
+    assert pub == 3.5
+    assert official_change(idx, "2026-09", "mom") is None

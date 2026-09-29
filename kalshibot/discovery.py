@@ -193,7 +193,8 @@ class MarketDiscovery:
         return events, stats
 
     # ---------------------------------------------------------------
-    def discover_series(self, series: list[str]) -> tuple[list, DiscoveryStats]:
+    def discover_series(self, series: list[str],
+                        max_hours: float | None = None) -> tuple[list, DiscoveryStats]:
         """Only the markets in the named series. Asked for directly.
 
         `discover()` reads the whole exchange and then filters. That is the
@@ -223,9 +224,10 @@ class MarketDiscovery:
         if not markets:
             log.warning("DISCOVERY  the exchange returned nothing for %s",
                         ", ".join(series))
-        return self._build_events(markets, stats)
+        return self._build_events(markets, stats, max_hours)
 
-    def _build_events(self, markets, stats) -> tuple[list, DiscoveryStats]:
+    def _build_events(self, markets, stats,
+                      max_hours: float | None = None) -> tuple[list, DiscoveryStats]:
         """Markets -> events, with the same filters `discover()` applies."""
         exclusive_flags, event_meta = self._event_metadata()
         stats.markets_seen = len(markets)
@@ -264,7 +266,7 @@ class MarketDiscovery:
             if mins < self.min_minutes_to_close:
                 stats.dropped_closing_soon += len(usable)
                 continue
-            if mins > self.max_hours_to_close * 60:
+            if mins > (max_hours if max_hours is not None else self.max_hours_to_close) * 60:
                 continue
             events.append(ev)
             stats.events_kept += 1

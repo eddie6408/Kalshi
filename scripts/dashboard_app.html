@@ -921,7 +921,8 @@ function renderWeather() {
         <div class="right">${c.model ? chip(c.model, c.model === "nowcast" ? "accent" : "info") : ""}</div></div>
       <div class="flex" style="margin:10px 0 6px;align-items:baseline"><div class="big num">${n(fc.mean) === null ? "—" : (+fc.mean).toFixed(1) + "°"}</div><div class="hint">± ${n(fc.sigma) === null ? "—" : (+fc.sigma).toFixed(1)}°F · forecast high ${esc(fc.target_date || "")}</div></div>
       <div class="row"><span>Observed so far</span><b>${n(ob.value) === null ? "—" : (+ob.value).toFixed(1) + "°F"}</b></div>
-      <div class="row"><span>Last official (CLI)</span><b>${n(off.value) === null ? "—" : off.value + "°F"} <span class="hint">${esc(off.target_date || "")}</span></b></div>
+      <div class="row"><span>Last official (NWS CLI)</span><b>${n(off.value) === null ? "—" : off.value + "°F"} <span class="hint">${esc(off.target_date || "")}</span></b></div>
+      <div class="row"><span>Settles on (Weather Co.)</span><b>${n((c.settlement || {}).value) === null ? "—" : c.settlement.value + "°F"} <span class="hint">${esc((c.settlement || {}).target_date || "")}</span></b></div>
       <div class="row"><span>Lead / source</span><b>${n(fc.lead_hours) === null ? "—" : (+fc.lead_hours).toFixed(1) + "h"} · ${esc((fc.source || "").replace("open-meteo-", ""))}</b></div>
       <div class="row"><span>Markets scanned · 24h</span><b>${c.scanned_24h} <span class="hint">${c.accepted_24h} accepted</span></b></div>
       <div style="border-top:1px solid var(--border);margin:8px 0 4px"></div>

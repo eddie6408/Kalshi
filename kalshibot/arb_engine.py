@@ -237,6 +237,9 @@ class ArbitrageEngine:
                                   else None)))
                 # How far out its markets are worth reading on production.
                 out[-1].watch_max_lead_hours = own.get("watch_max_lead_hours")
+                # How far ahead its markets are looked for (priced and scored,
+                # traded only inside max_lead_hours).
+                out[-1].discovery_max_hours = own.get("discovery_max_hours")
                 log.info("FORECAST  %s registered", name)
             except Exception as exc:  # noqa: BLE001
                 log.error("FORECAST  %s failed to start: %s", name, exc)
@@ -454,7 +457,12 @@ class ArbitrageEngine:
         self._refresh_bankroll()
         self._refresh_positions()
 
-        events, stats = self.discovery.discover_series(wanted)
+        # A strategy may look further ahead than the shared window (the
+        # inflation ladders run months out; weather needs two weeks at most).
+        horizons = [h for h in (getattr(st, "discovery_max_hours", None) for st in mine)
+                    if h is not None]
+        events, stats = (self.discovery.discover_series(wanted, max_hours=max(horizons))
+                         if horizons else self.discovery.discover_series(wanted))
         report.discovery = stats
         log.info("FOCUSED  %d series -> %d events / %d markets (%.1fs)",
                  len(wanted), len(events), stats.markets_kept, time.time() - t0)

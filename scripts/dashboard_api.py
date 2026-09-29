@@ -270,6 +270,9 @@ def weather(conn, cfg: dict) -> dict:
         official = first(conn, "SELECT value, target_date FROM source_observations WHERE "
                                "source_id='nws_climate_report' AND subject=? "
                                "ORDER BY id DESC LIMIT 1", "CLI" + str(s.get("climate_report") or ""))
+        settle = first(conn, "SELECT value, target_date FROM source_observations WHERE "
+                             "source_id='twc_settlement' AND subject=? ORDER BY id DESC LIMIT 1",
+                       str(station or "").upper())
         scanned = first(conn, "SELECT COUNT(DISTINCT markets) n, "
                               "SUM(decision='ACCEPTED') acc FROM opportunity_ledger "
                               "WHERE markets LIKE ? AND detected_at >= ?", prefix + "-%", since)
@@ -283,6 +286,7 @@ def weather(conn, cfg: dict) -> dict:
             "series": prefix, "label": s.get("label") or prefix, "station": station,
             "kind": s.get("kind"), "timezone": s.get("timezone"),
             "forecast": fc[0] if fc else None, "observed": obs, "official": official,
+            "settlement": settle,
             "scanned_24h": (scanned or {}).get("n") or 0,
             "accepted_24h": (scanned or {}).get("acc") or 0,
             "top_reasons": reasons, "model": (latest or {}).get("model"),

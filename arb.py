@@ -778,6 +778,12 @@ def main() -> int:
                           for x in (settings.get("weather.series") or [])
                           if x.get("station") and x.get("climate_report")}
 
+        from kalshibot.settlement_check import (TWCSettlement, check_inflation,
+                                                stations_from_config)
+        twc = TWCSettlement(user_agent=nws_user_agent(settings.section("sources")))
+        twc_stations = stations_from_config(settings.get("weather.series") or [])
+        infl = next((s for s in engine.forecasts if s.name == "inflation_nowcast"), None)
+
         def scoring_pass():
             from kalshibot.weatherdata import WeatherData
             wd = WeatherData(cache_seconds=1,
@@ -796,6 +802,18 @@ def main() -> int:
                     retention_days=int(settings.get("journal.ledger_retention_days", 90)))
             except Exception as exc:  # noqa: BLE001
                 log.error("LEDGER  outcome pass failed: %s", exc)
+            # What Kalshi settles on, checked against what the bot scores on:
+            # The Weather Company (weather) and the official one-decimal
+            # BLS / BEA figures (inflation). Records and alerts; trades nothing.
+            try:
+                twc.check(journal.conn, twc_stations)
+            except Exception as exc:  # noqa: BLE001
+                log.error("SETTLE CHECK  weather failed: %s", exc)
+            if infl is not None:
+                try:
+                    check_inflation(journal.conn, infl.estimator.data, series_client)
+                except Exception as exc:  # noqa: BLE001
+                    log.error("SETTLE CHECK  inflation failed: %s", exc)
             # C2 M0: what did the simulated maker orders' contracts pay?
             if maker_shadow is not None:
                 try:
