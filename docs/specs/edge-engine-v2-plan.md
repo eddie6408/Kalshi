@@ -128,3 +128,15 @@ lvt study gap|decay|calibration|funnel|baseline|scores|errors|latency|model|mm [
 lvt validation
 lvt experiment add --name ... --hypothesis ... --disproof ... | list | result --id ... --status ...
 lvt ab
+
+## 2026-09-29: would a faster score feed help? (EXP-009, upper bound)
+
+`scripts/lead_study.py`: 1,340 point changes in 69 matches. By the time
+Kalshi's live score shows a point, the market has already made ~95% of its
+reaction (1.78c of 1.87c; ~60% of it 10 s earlier; on big points 4.5c of
+~5c by 5 s earlier). Upper bound with PERFECT knowledge of each point L s
+before Kalshi's feed, taker in and out (+30 s), c/contract net:
+L=0 -4.64, L=2 -4.51, L=5 -4.42, L=10 -4.09, L=20 -3.29; biggest points
+(model impact >=5c) L=20 -1.08. A typical point moves the match price ~2c
+and a round trip costs ~5c, so no feed (paid or courtside) makes point-by-
+point trading pay. Not pursued.
