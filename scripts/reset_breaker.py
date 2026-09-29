@@ -52,7 +52,7 @@ def main() -> int:
     losses = journal.reset_breaker(args.note.strip())
     print(f"  RESET. {losses} earlier loss(es) no longer count; the limit of "
           f"{limit} applies to new losses from now.")
-    print("  Restart the bot for it to take effect.")
+    print("  The running bot picks this up within a few seconds (no restart needed).")
     return 0
 
 

@@ -144,3 +144,54 @@ def test_an_unreadable_journal_does_not_silently_pass_as_checked():
 def test_breakers_with_no_journal_are_skipped():
     e = _engine({"daily_loss_limit_usd": 40}, None)
     assert e._breakers_ok() == (True, "ok")
+
+
+def test_an_operator_reset_clears_the_latch_without_a_restart():
+    """Dashboard 'Reset breaker': the trip clears live, the losses stay on
+    record, and a fresh losing run trips it again."""
+    import time as _t
+    from kalshibot.arb_engine import ArbitrageEngine
+
+    class J:
+        def __init__(self):
+            self.reset_at = None
+            self.run = 0
+
+        def last_breaker_reset(self):
+            return self.reset_at
+
+        def consecutive_losses(self):
+            return self.run
+
+        def realised_pnl(self, since=None):
+            return 0.0
+
+    class S:
+        def section(self, name):
+            return {"max_consecutive_losses": 3} if name == "safety" else {}
+
+    e = ArbitrageEngine.__new__(ArbitrageEngine)
+    e.journal, e.s, e.portfolio = J(), S(), None
+    e._halted, e._halt_reason, e._halted_at = False, "", ""
+    e._halt_resettable, e._reset_checked_at = True, 0.0
+    e.journal.run = 3
+    assert e._breakers_ok()[0] is False and e._halted
+    e._reset_checked_at = 0.0
+    assert e._breakers_ok()[0] is False                     # no reset yet
+    from datetime import datetime, timezone
+    e.journal.reset_at = datetime.now(timezone.utc).isoformat()
+    e.journal.run = 0                                       # counts from the reset
+    e._reset_checked_at = 0.0
+    assert e._breakers_ok() == (True, "ok") and not e._halted
+    e.journal.run = 3                                       # a new losing run
+    assert e._breakers_ok()[0] is False
+
+
+def test_a_low_balance_halt_cannot_be_reset_from_the_dashboard():
+    from kalshibot.arb_engine import ArbitrageEngine
+    e = ArbitrageEngine.__new__(ArbitrageEngine)
+    e.journal = None
+    e._halted, e._halt_reason, e._halted_at = False, "", ""
+    e._halt_resettable, e._reset_checked_at = True, 0.0
+    e._halt("balance too low", resettable=False)
+    assert e._reset_since_halt() is False

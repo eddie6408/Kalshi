@@ -175,9 +175,13 @@ class ArbitrageEngine:
         self._pending_cost: dict[tuple[str, str], float] = {}
         #: what our own fills say we hold, cached for the length of one pass
         self._fill_holdings: dict[tuple[str, str], tuple[int, float] | None] = {}
-        #: set once a circuit breaker trips; only a restart clears it
+        #: set once a circuit breaker trips; cleared by a restart, or live by an
+        #: operator reset recorded after the trip (dashboard / reset_breaker.py)
         self._halted = False
         self._halt_reason = ""
+        self._halted_at = ""
+        self._halt_resettable = True
+        self._reset_checked_at = 0.0
         #: Guards the shared risk state above. Once each strategy has its own
         #: worker, two passes read and write `_positions` and `_pending_cost`
         #: at the same time - and those two are exactly what stops the bot
@@ -705,7 +709,7 @@ class ArbitrageEngine:
         a bot that exits leaving open risk unattended is worse than one that
         stops buying. Entries stay closed until it is restarted.
         """
-        if self._halted:
+        if self._halted and not self._reset_since_halt():
             return False, f"circuit breaker: {self._halt_reason}"
         if self.journal is None:
             return True, "ok"
@@ -718,12 +722,16 @@ class ArbitrageEngine:
                 if balance < min_balance:
                     return self._halt(
                         f"account balance ${balance:.2f} is below the "
-                        f"${min_balance:.2f} minimum")
+                        f"${min_balance:.2f} minimum", resettable=False)
 
             loss_limit = float(s.get("daily_loss_limit_usd", 0) or 0)
             if loss_limit:
+                # Today's losses - counted from the operator's last reset if
+                # that was later than midnight, so a reset starts the day's
+                # count again (the losses themselves stay on record).
                 midnight = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00")
-                today = self.journal.realised_pnl(since=midnight)
+                last = self._last_reset()
+                today = self.journal.realised_pnl(since=max(midnight, last or ""))
                 if today <= -abs(loss_limit):
                     return self._halt(
                         f"today's realised P/L is ${today:+.2f}, past the "
@@ -742,19 +750,46 @@ class ArbitrageEngine:
             log.error("RISK  could not evaluate the circuit breakers: %s", exc)
         return True, "ok"
 
-    def _halt(self, why: str) -> tuple[bool, str]:
+    def _halt(self, why: str, resettable: bool = True) -> tuple[bool, str]:
         self._halted = True
         self._halt_reason = why
+        self._halted_at = datetime.now(timezone.utc).isoformat()
+        self._halt_resettable = resettable
         log.error("RISK  CIRCUIT BREAKER  %s. No new positions will be opened "
-                  "until the bot is restarted (a consecutive-loss trip also "
-                  "needs scripts/reset_breaker.py first). Existing positions "
-                  "are still being managed.", why)
+                  "until it is reset (dashboard: Portfolio & risk -> Reset "
+                  "breaker) or the bot restarts. Existing positions are still "
+                  "being managed.", why)
         ALERTS.send(today_key("circuit_breaker"), "Circuit breaker tripped",
-                    f"{why}. No new positions until you review it and restart "
-                    f"(START BOT (VPS) offers the reset). Existing positions "
-                    f"are still managed.",
+                    f"{why}. No new positions until you reset it (dashboard, "
+                    f"Portfolio & risk). Existing positions are still managed.",
                     priority="urgent", tags="rotating_light")
         return False, f"circuit breaker: {why}"
+
+    def _last_reset(self) -> str | None:
+        try:
+            return self.journal.last_breaker_reset() if self.journal is not None else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _reset_since_halt(self) -> bool:
+        """Has the operator reset the breaker since it tripped? Checked at
+        most every five seconds. Resetting only clears the latch - every
+        breaker is evaluated again straight away, the losses stay on record
+        and the next losing run trips it again. A balance below the minimum
+        cannot be reset this way."""
+        if not getattr(self, "_halt_resettable", True):
+            return False
+        now = time.time()
+        if now - getattr(self, "_reset_checked_at", 0.0) < 5.0:
+            return False
+        self._reset_checked_at = now
+        last = self._last_reset()
+        if last and last > (getattr(self, "_halted_at", "") or ""):
+            log.warning("RISK  circuit breaker reset by the operator (%s); "
+                        "entries resume, the loss history is kept", last)
+            self._halted, self._halt_reason = False, ""
+            return True
+        return False
 
     def _risk_ok(self, op: ArbitrageOpportunity) -> tuple[bool, str]:
         ok, why = self._breakers_ok()

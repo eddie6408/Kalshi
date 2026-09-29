@@ -283,7 +283,7 @@ td.r, th.r { text-align: right; }
           <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>Refresh data</button>
         <button class="btn" id="btn-startstop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg><span>Stop bot</span></button>
         <button class="btn" id="btn-restart"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.36 6.36L3 16M3 21v-5h5"/></svg>Restart</button>
-        <button class="btn danger" id="btn-reset" title="Acknowledge the consecutive-loss breaker (with a note), then restart"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>Reset breaker</button>
+        <button class="btn danger" id="btn-reset" title="Reset the circuit breaker: trading resumes in seconds, the loss history is kept"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>Reset breaker</button>
         <div class="clock" id="clock">--:--:--</div>
       </div>
     </header>
@@ -656,8 +656,8 @@ function renderPills() {
     `<span class="pill"><span class="dot ${staleN ? "warn" : "good"}"></span>Data ${staleN ? staleN + " stale" : "fresh"}</span>`,
     `<span class="pill"><span class="dot ${st.mode === "DEMO_LIVE" ? "good" : "warn"}"></span>${esc((st.mode || "mode ?").replace("_", " "))} · ${esc(st.env || "demo")}</span>`,
   ];
-  const br = (SNAP.risk || {}).breaker || {};
-  if (br.tripped) pills.push(`<span class="pill"><span class="dot bad"></span>Breaker tripped</span>`);
+  const br = (SNAP.risk || {}).breaker || {}, live = st.breaker || {};
+  if (br.tripped || live.halted) pills.push(`<span class="pill"><span class="dot bad"></span>Breaker tripped</span>`);
   $("#pills").innerHTML = pills.join("");
   // buttons
   const ss = $("#btn-startstop");
@@ -665,11 +665,11 @@ function renderPills() {
   ss.querySelector("span").textContent = active ? "Stop bot" : "Start bot";
   ss.className = "btn " + (active ? "danger" : "primary");
   ss.querySelector("svg").innerHTML = active ? '<rect x="6" y="6" width="12" height="12" rx="2"/>' : '<path d="M7 4l13 8-13 8z"/>';
-  for (const id of ["#btn-startstop", "#btn-restart", "#btn-reset"]) {
+  for (const id of ["#btn-startstop", "#btn-restart"]) {
     $(id).disabled = !CAPS.service_control;
     if (!CAPS.service_control) $(id).title = "Start/stop/restart work only when opened through the Mac launcher (they need the root SSH key on your Mac).";
   }
-  $("#btn-reset").classList.toggle("primary", !!br.tripped);
+  $("#btn-reset").classList.toggle("primary", !!(br.tripped || live.halted));
 }
 
 function renderSideFoot() {
@@ -686,8 +686,9 @@ function renderBanners() {
   const warns = [];
   if (svc.active === "active" && (s.status_age ?? 1e9) > 240) warns.push(`The bot service is running but has not reported for ${ageS(s.status_age)}. It may be starting up (self-test takes ~2 min) or stuck; try Refresh data, then Restart.`);
   if (svc.active !== "active") warns.push(`The bot service is ${esc(svc.active || "unknown")}. Nothing is being priced or managed.`);
-  const br = (SNAP.risk || {}).breaker || {};
-  if (br.tripped) warns.push(`Consecutive-loss breaker tripped: ${br.losses} losing positions in a row (limit ${br.limit}). New entries are paused until it is reset.`);
+  const br = (SNAP.risk || {}).breaker || {}, live = ((SNAP.system || {}).status || {}).breaker || {};
+  if (live.halted) warns.push(`Circuit breaker tripped: ${esc(live.reason)}. New entries are paused - Reset breaker resumes them (the losses stay on record).`);
+  else if (br.tripped) warns.push(`Consecutive-loss breaker: ${br.losses} losing positions in a row (limit ${br.limit}). Reset breaker to resume.`);
   const rec = s.reconcile; if (rec && !rec.ok) warns.push(`Journal and exchange disagree on open positions (exchange only: ${rec.exchange_only.length}, journal only: ${rec.journal_only.length}). See Trades.`);
   const errs = Object.keys(SNAP.errors || {}); if (errs.length) warns.push(`Some panels could not be built: ${errs.join(", ")}.`);
   const b = $("#banner-warn"); b.classList.toggle("show", warns.length > 0); $("#banner-warn-text").innerHTML = warns.join("<br>");
@@ -1022,7 +1023,10 @@ function renderRisk() {
   $("#risk-kpis").innerHTML = errBox("risk") + [
     kpi("Deployed capital", usd(r.exposure), `of ${usd(r.max_total_exposure_usd, 0)} total limit`),
     kpi("Today's P&amp;L", `<span class="${cls(r.today_pnl)}">${sgnUsd(r.today_pnl)}</span>`, `daily loss limit ${usd(r.daily_loss_limit_usd, 0)}`),
-    kpi("Loss breaker", `${br.losses ?? "—"} / ${br.limit || "off"}`, br.tripped ? chip("Tripped", "bad") : chip("OK", "good") + ` <span class="hint">reset ${br.last_reset ? agoT(br.last_reset) : "never"}</span>`),
+    kpi("Loss breaker", `${br.losses ?? "—"} / ${br.limit || "off"}`,
+      ((br.tripped || (((SNAP.system || {}).status || {}).breaker || {}).halted) ? chip("Tripped", "bad") : chip("OK", "good")) +
+      ` <span class="hint">reset ${br.last_reset ? agoT(br.last_reset) : "never"}</span>` +
+      `<button class="btn ${br.tripped ? "primary" : ""}" id="btn-reset-quick" style="margin-top:8px;width:100%">Reset breaker · resume trading</button>`),
     kpi("Open positions", String((core.open || []).filter(x => x.qty > 0).length), `max ${esc(r.max_trades_per_hour ?? "—")} trades/hour`),
   ].join("");
   const meter = (label, val, max, fmt = v => usd(v)) => {
@@ -1176,12 +1180,19 @@ $("#btn-restart").onclick = async () => {
   const ok = await confirmBox({ title: "Restart the bot?", text: "Stops and starts the kalshibot service. The self-test runs first (~2 minutes); no trading during that time. Use this if data stays stale after Refresh.", ok: "Restart" });
   if (ok) service("restart", $("#btn-restart"));
 };
-$("#btn-reset").onclick = async () => {
+async function quickReset(btn) {
   const br = (SNAP && SNAP.risk && SNAP.risk.breaker) || {};
-  const note = await confirmBox({ title: "Reset the loss breaker and restart?", danger: true, note: true, noteLabel: "What did you review? (required, e.g. 'losses were demo spread round-trips, model unchanged')",
-    text: `Losing positions in a row: <b>${br.losses ?? "?"}</b> (limit ${br.limit ?? "?"}). Resetting means earlier losses no longer count; the limit applies to new losses. The bot then restarts - a restart alone would re-trip it.`, ok: "Reset and restart" });
-  if (note) service("reset", $("#btn-reset"), { note });
-};
+  const ok = await confirmBox({ title: "Reset the circuit breaker?",
+    text: `Losing positions in a row: <b>${br.losses ?? "?"}</b> (limit ${br.limit ?? "?"}). Trading resumes within a few seconds - no restart. Every loss stays on record; the loss count and today's loss limit start again from now, so a new losing run trips it again (and this button resets it again).`, ok: "Reset and resume" });
+  if (!ok) return;
+  await withBusy(btn, async () => {
+    try { const j = await post("/api/control/reset-breaker", { note: "one-click reset from the dashboard" }); toast("Breaker reset - trading resumes", j.detail || "", "good"); }
+    catch (e) { toast("Reset failed", e.message, "bad"); }
+    await load(true); setTimeout(() => load(true), 8000);
+  });
+}
+$("#btn-reset").onclick = () => quickReset($("#btn-reset"));
+document.addEventListener("click", e => { const b = e.target.closest("#btn-reset-quick"); if (b) quickReset(b); });
 
 document.querySelectorAll("#seg-strategy button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#seg-strategy button").forEach(x => x.classList.toggle("on", x === b));

@@ -679,6 +679,8 @@ def main() -> int:
                 "paper_live": paper_live.summary() if paper_live else None,
                 "prod_arb": prod_arb.summary() if prod_arb else None,
                 "fees": engine.fee_schedule.summary() if engine.fee_schedule else None,
+                "breaker": {"halted": bool(engine._halted), "reason": engine._halt_reason,
+                            "since": getattr(engine, "_halted_at", "")},
                 "sources": MONITOR.snapshot(),
                 "control": {n: inbox.last_done(n) for n in CONTROL_REQUESTS},
             })
