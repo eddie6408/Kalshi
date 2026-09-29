@@ -77,9 +77,34 @@ overconfident in size. Consequences, as pre-registered:
   is withdrawn.
 * Still open: EXP-007 longshot bias (passive; 55 of 100 matches needed;
   observed 0.236 vs price 0.176, breakeven 0.200, CI [0.144, 0.363]).
-* The only idea left on the table is passive market-making in thin tennis
-  markets (spread capture, no fair-value claim). It needs its own
-  hypothesis and kill rule and has not been started.
+* Passive market-making was tested next (EXP-008, below) and also killed.
+
+## Outcome 2026-09-29: passive market-making killed (EXP-008 KILL)
+
+`lvt study mm` replayed 323 tennis match-winner markets (195 matches,
+97/98 chronological split) with one-lot post-only bids on both sides,
+filled by the paper queue model, 0.5 s order latency, cancel when the
+touch moves. Net markout to the side mid 60 s after the fill (cents per
+contract, maker fee included):
+
+| variant | DEV | TEST | ALL (95% CI) |
+|---|---|---|---|
+| join the touch (spread >= 2c) | -2.20 | -1.37 | -1.79 [-1.99, -1.58] |
+| improve by 1c (spread >= 3c) | -2.39 | -1.65 | -2.03 [-2.26, -1.82] |
+| join + 15 s score guard | -2.21 | -1.23 | -1.77 [-2.02, -1.54] |
+| improve + score guard | -2.36 | -1.49 | -1.98 [-2.26, -1.72] |
+
+About 91% of fills are pick-offs (a trade through our price or the book
+moving through us) at -1.5 to -3c; the 9% ordinary queue fills make +0.3 to
++0.8c. Orders that had rested more than 2.5 s still lose -1.57c, so this is
+not an artifact of placing orders on a stale book. Holding to settlement is
+also negative (-2.1c). Faster data would not rescue it: the losses are the
+sweeps themselves.
+
+Four independent approaches have now failed on this data (price-only
+baseline, maker baseline, fair value, market-making). The common cause:
+live tennis prices on Kalshi move before a public REST client can see or
+react, and what remains is priced within our costs.
 
 ## Hypotheses queued for V2 (not implemented)
 * (WITHDRAWN 2026-09-29, see above) EXP-005 pool order flow across mirror markets: YES on player A and NO on
@@ -99,7 +124,7 @@ overconfident in size. Consequences, as pre-registered:
   outcomes (0), dense fair-value history (134 throttled rows).
 
 ## Commands
-lvt study gap|decay|calibration|funnel|baseline|scores|errors|latency|model [--start ISO --end ISO --env PAPER_EDGE]
+lvt study gap|decay|calibration|funnel|baseline|scores|errors|latency|model|mm [--start ISO --end ISO --env PAPER_EDGE]
 lvt validation
 lvt experiment add --name ... --hypothesis ... --disproof ... | list | result --id ... --status ...
 lvt ab

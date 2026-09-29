@@ -16,8 +16,8 @@ moves), not event outcomes. It is a separate application from `kalshi-bot`:
 Nothing is imported from, written to, or restarted in the existing bot.
 
 **Status 2026-09-29: recording only, no strategy trades.** The price-only
-baseline (EXP-001/002) and the fair-value edge engine (EXP-006 KILL) both
-failed their tests; see docs/specs/edge-engine-v2-plan.md. The service keeps
+baseline (EXP-001/002), the fair-value edge engine (EXP-006) and passive
+market-making (EXP-008) all failed their tests; see docs/specs/edge-engine-v2-plan.md. The service keeps
 recording quotes, trades, scores and would-be (SHADOW) signals.
 
 **Before SHADOW or LIVE, revisit the risk limits** - PAPER runs with account
