@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -40,6 +41,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=180, help="previous-runs history length")
     ap.add_argument("--chunk", type=int, default=90)
+    ap.add_argument("--pause", type=float, default=8.0,
+                    help="seconds between previous-runs requests (Open-Meteo's per-minute "
+                         "limit counts a 90-day, 42-variable request as ~35 calls)")
     ap.add_argument("--only", choices=["climatology", "twc", "hourly_obs", "previous_runs"])
     ap.add_argument("--open-meteo-budget", type=int, default=None,
                     help="override today's Open-Meteo budget for this run")
@@ -108,6 +112,7 @@ def main() -> int:
                 if have and have["c"] >= expected:
                     s = e + timedelta(days=1)
                     continue
+                time.sleep(args.pause)
                 r = pit.backfill_previous_runs(icao, s, e, models=BACKFILL_MODELS)
                 if r == -1:
                     print(f"  Open-Meteo budget reached at {icao} {s} - run again tomorrow")
