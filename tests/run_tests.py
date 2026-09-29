@@ -7,6 +7,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 if __name__ == "__main__":
+    import logging
+    logging.disable(logging.CRITICAL)          # synthetic alerts never belong in logs/lvt.log
     suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"), top_level_dir=str(ROOT))
     res = unittest.TextTestRunner(verbosity=1).run(suite)
     failed = len(res.failures) + len(res.errors)

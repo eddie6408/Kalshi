@@ -89,8 +89,10 @@ class TestRegistry(unittest.TestCase):
         from lvt.__main__ import main
         import io
         import contextlib
+        from unittest import mock
         buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
+        # the CLI attaches the production log files; test alerts must never reach them
+        with contextlib.redirect_stdout(buf), mock.patch("lvt.logsetup.setup"):
             rc = main(["experiment", "add", "--name", "x"])
         self.assertEqual(rc, 2)
         self.assertIn("hypothesis", buf.getvalue())
