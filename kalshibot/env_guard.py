@@ -152,6 +152,42 @@ def assert_public_market_data(url: str, path: str, method: str = "GET") -> None:
             f"REFUSED: {host!r} is not a Kalshi host.")
 
 
+#: The production market-data socket, and the only channels it may carry.
+#: Operator decision 2026-09-29: a production API key exists for REAL-TIME
+#: MARKET DATA ONLY. It signs this socket's handshake and nothing else; it is
+#: never given to a REST client, an order path or a portfolio read. Using it
+#: for trading requires the operator's explicit command AND a re-confirmation.
+PROD_MARKET_DATA_WS = (
+    "wss://external-api-ws.kalshi.com/trade-api/ws/v2",
+    "wss://api.elections.kalshi.com/trade-api/ws/v2",
+)
+PROD_MARKET_DATA_CHANNELS = frozenset({"orderbook_delta", "ticker", "trade"})
+_WS_COMMANDS = frozenset({"subscribe", "unsubscribe", "update_subscription", "list_subscriptions"})
+
+
+def assert_prod_market_data_ws(url: str) -> None:
+    """The production socket may be opened only at the exact market-data URL."""
+    if (url or "").rstrip("/") not in PROD_MARKET_DATA_WS:
+        raise ProductionBlocked(
+            f"REFUSED: {url!r} is not the production market-data socket "
+            f"({', '.join(PROD_MARKET_DATA_WS)}).")
+
+
+def assert_market_data_command(payload: dict) -> None:
+    """Every message sent on the production socket: a subscription command
+    for market-data channels only. Private channels (fill, market_positions,
+    order_group_updates, communications) and anything else are refused."""
+    cmd = (payload or {}).get("cmd")
+    if cmd not in _WS_COMMANDS:
+        raise ProductionBlocked(f"REFUSED: command {cmd!r} on the production market-data socket.")
+    chans = set(((payload or {}).get("params") or {}).get("channels") or [])
+    bad = chans - PROD_MARKET_DATA_CHANNELS
+    if bad:
+        raise ProductionBlocked(
+            f"REFUSED: channel(s) {sorted(bad)} on the production market-data socket; "
+            f"allowed: {sorted(PROD_MARKET_DATA_CHANNELS)}.")
+
+
 def assert_live_books_are_paper_only(mode: str, book_source: str) -> None:
     """Live books may only ever be paired with paper trading.
 
@@ -197,5 +233,7 @@ def describe_guard() -> str:
         "  unknown kalshi hosts : blocked unless the hostname contains 'demo'\n"
         "  order entry point    : place_demo_order() only\n"
         "  production reads     : public market data only, GET only, no "
-        "credential, no portfolio/order/fill/balance path"
+        "credential, no portfolio/order/fill/balance path\n"
+        "  production socket    : market-data channels only "
+        f"({', '.join(sorted(PROD_MARKET_DATA_CHANNELS))}); its key signs nothing else"
     )

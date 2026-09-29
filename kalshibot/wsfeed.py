@@ -229,7 +229,7 @@ class KalshiFeed:
         # which refuses everything - including the real demo URL - while
         # looking like the guard is working. A loopback test caught exactly
         # that here.
-        assert_demo_url(self.cfg.url, "market data feed")
+        self._assert_url()
         headers = self._auth_headers()
         log.info("FEED  connecting to %s", self.cfg.url)
         ws = WebSocket.connect(self.cfg.url, headers=headers,
@@ -243,6 +243,11 @@ class KalshiFeed:
         log.info("FEED  connected; following %d markets", len(wanted))
         if wanted:
             self._send_subscribe(wanted)
+
+    def _assert_url(self) -> None:
+        """Demo only. The production market-data feed (prod_feed.py)
+        overrides this with its own, narrower check."""
+        assert_demo_url(self.cfg.url, "market data feed")
 
     def _auth_headers(self) -> dict[str, str]:
         if self.signer is None:

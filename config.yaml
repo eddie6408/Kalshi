@@ -810,6 +810,22 @@ feed:
 # the PRODUCTION book and trade prints for the same markets. Replay (3b) and
 # the fill model need this history, and it only accumulates forward.
 # Recording stops (with one alert) below min_free_gb; trading never does.
+
+# Real-time PRODUCTION order books (kalshibot/prod_feed.py) - MARKET DATA ONLY.
+# Operator decision 2026-09-29: the production API key in secrets_dir signs
+# this socket's handshake and nothing else. Subscriptions are fenced to
+# orderbook_delta / ticker / trade (env_guard). Books go to their own store,
+# read by the production watch / paper account. Execution stays on demo;
+# trading with this key requires the operator's explicit command AND a
+# re-confirmation. Missing or malformed key = feed off, bot unaffected.
+prod_feed:
+  enabled: true
+  url: "wss://external-api-ws.kalshi.com/trade-api/ws/v2"
+  secrets_dir: /opt/kalshi/secrets
+  max_subscriptions: 400
+  ping_seconds: 20
+  idle_timeout: 90
+
 recorder:
   enabled: true
   directory: data/ticks

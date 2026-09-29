@@ -178,6 +178,12 @@ class ProductionWatch:
         self.trades_read = 0
         self.errors = 0
         self.backoff_until = 0.0
+        #: Real-time production books (prod_feed.py), when the operator's
+        #: market-data key is installed: a MarketState the production socket
+        #: keeps current. latest() serves from it while the socket is up and
+        #: the book is trusted; otherwise the polled book, as before.
+        self.live_state = None
+        self.live_hits = 0
 
     # ---- called from the strategy's thread ------------------------------
     def watch(self, ticker: str, info: dict | None = None) -> None:
@@ -194,6 +200,13 @@ class ProductionWatch:
                 w.info = dict(info, at=now)
 
     def latest(self, ticker: str, max_age: float | None = None) -> Quote | None:
+        live = self.live_state
+        if live is not None:
+            up = getattr(live, "feed_live", None)
+            e = live.entry(ticker) if callable(up) and up() else None
+            if e is not None and e.trusted and e.source == "ws":
+                self.live_hits += 1
+                return Quote.of(ticker, e.to_book(), self.clock())
         with self._lock:
             q = self._latest.get(ticker)
         if q is None:
@@ -348,5 +361,6 @@ class ProductionWatch:
         return True
 
     def summary(self) -> str:
+        live = (f", {self.live_hits} real-time reads" if self.live_state is not None else "")
         return (f"{len(self._w)} markets watched, {self.books_read} books, "
-                f"{self.trades_read} prints, {self.errors} errors")
+                f"{self.trades_read} prints, {self.errors} errors{live}")

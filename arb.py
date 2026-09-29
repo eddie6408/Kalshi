@@ -569,6 +569,41 @@ def main() -> int:
               f"prints every {watch_cfg.trades_interval_seconds:.0f}s, "
               f"<= {watch_cfg.max_requests_per_second:g} req/s (read only)"
               f"{'; maker shadow on (no orders)' if maker_shadow else ''}{X}")
+    # ---- real-time PRODUCTION books: market data only (prod_feed.py) ----
+    # The operator's production key (2026-09-29) signs this socket's
+    # handshake and nothing else; subscriptions are fenced to market-data
+    # channels by env_guard; books land in their own MarketState, read only
+    # by the production watch. Execution stays locked to demo.
+    prod_feed = prod_state = None
+    stop_prod_feed = threading.Event()
+    prod_feed_thread = None
+    pf_cfg = settings.section("prod_feed") or {}
+    if pf_cfg.get("enabled", False) and prod_watch is not None:
+        from kalshibot.env_guard import PROD_MARKET_DATA_WS
+        from kalshibot.prod_feed import ProductionMarketDataFeed, load_market_data_signer
+        pf_url = pf_cfg.get("url") or PROD_MARKET_DATA_WS[0]
+        pf_signer, why = load_market_data_signer(pf_cfg.get("secrets_dir", "/opt/kalshi/secrets"),
+                                                 pf_url)
+        if pf_signer is None:
+            print(f"{Y}  production market-data feed OFF: {why}{X}")
+            log.warning("PROD FEED  off: %s", why)
+        else:
+            prod_state = MarketState(None, max_book_age=30.0)
+            pcfg = FeedConfig.from_dict({**pf_cfg, "enabled": True, "url": pf_url})
+            prod_feed = ProductionMarketDataFeed(prod_state, pf_signer, pcfg)
+            prod_watch.live_state = prod_state
+            prod_feed_thread = threading.Thread(target=prod_feed.run_forever,
+                                                args=(stop_prod_feed,), name="prod_feed",
+                                                daemon=True)
+            prod_feed_thread.start()
+
+            def _prod_feed_probe():
+                st = prod_feed.stats
+                return (HEALTHY if st.connected_since else DOWN), st.summary()
+            MONITOR.add_probe("kalshi_ws_production", _prod_feed_probe)
+            print(f"{D}  production market-data feed: {pcfg.url} (orderbook_delta only; "
+                  f"key signs the handshake only; execution stays on demo){X}")
+
     interval = int(settings.get("arb_loop.scan_interval_seconds", 60))
     closed_interval = int(settings.get("arb_loop.closed_check_seconds", 900))
 
@@ -613,6 +648,8 @@ def main() -> int:
         if feed_cfg.enabled:
             feed.follow(state.hot_tickers(feed_cfg.max_subscriptions))
             report_feed(feed, state, args.verbose)
+        if prod_feed is not None:
+            prod_feed.follow(prod_watch.watched())
 
     workers_cfg = settings.section("workers") or {}
     supervisor = Supervisor()
@@ -715,6 +752,12 @@ def main() -> int:
                             "since": getattr(engine, "_halted_at", "")},
                 "sources": MONITOR.snapshot(),
                 "wx_research": wx.summary() if wx is not None else None,
+                "prod_feed": ({"connected": bool(prod_feed.stats.connected_since),
+                               "connected_since": prod_feed.stats.connected_since,
+                               "last_message_at": prod_feed.stats.last_message_at,
+                               "summary": prod_feed.stats.summary(),
+                               "real_time_reads": prod_watch.live_hits}
+                              if prod_feed is not None else None),
                 "control": {n: inbox.last_done(n) for n in CONTROL_REQUESTS},
             })
         except Exception as exc:  # noqa: BLE001
@@ -960,6 +1003,7 @@ def main() -> int:
         supervisor.shutdown(timeout=10)
         stop_positions.set()
         stop_feed.set()
+        stop_prod_feed.set()
         if position_thread is not None:
             position_thread.join(timeout=5)
         if feed_thread is not None:
