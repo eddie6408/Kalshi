@@ -245,8 +245,12 @@ weather:
     sigma_base_f: 0.8
     sigma_per_hour_f: 0.35
     sigma_max_f: 4.0
-    # Station readings ran 0.4-0.8F warm of the official report (2026-09-24).
-    observation_margin_f: 1.0
+    # Official report minus the highest station reading: -0.6..+1.0F over 18
+    # city-days (25-27 Sep), centred near 0. Version 2 (29 Sep) treats the
+    # official value as uncertain in BOTH directions; version 1 used a hard
+    # floor 1F below the reading and was 99.5% sure of wrong buckets.
+    observation_offset_f: 0.0
+    observation_sd_f: 0.8
 
   # Extra uncertainty (deg F) added on top of the raw ensemble spread to
   # account for model bias and the fact that the ensemble grid point is not
@@ -683,6 +687,12 @@ market_skill:
   # Phase B made same-day pricing a different forecaster (the nowcast), so
   # its record starts at deployment; the ensemble's 0-6h record is not its.
   since: "2026-09-26T08:00:00"
+  # Nowcast version 1 (26-29 Sep) collapsed onto a floor 1F below the station
+  # reading and was 99.5% sure of wrong buckets; its rows are not the model
+  # that runs now. Checked before deploying: 0-6h moves BEHIND -> EVEN, so
+  # weather entries stay blocked (require: ahead).
+  model_since:
+    nowcast: "2026-09-29T05:16:00"
   min_contracts: 15
   # "Significantly" = more than `margin` Brier points, at `z` standard errors
   # computed across contracts.

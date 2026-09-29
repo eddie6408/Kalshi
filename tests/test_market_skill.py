@@ -219,3 +219,22 @@ def test_the_dashboard_panel_uses_the_same_numbers_as_the_gate():
     cells = {(c["series"], c["bucket"]): c for c in panel["cells"]}
     assert cells[("KXHIGHNY", "0-6h")]["verdict"] == BEHIND
     assert panel["require"] == "ahead"
+
+
+def test_rows_from_a_retired_model_version_can_be_left_out():
+    from kalshibot.market_skill import fetch_rows
+    with tempfile.TemporaryDirectory() as tmp:
+        j = Journal(Path(tmp) / "j.db")
+        for ts, model in (("2026-09-27T10:00", "nowcast"), ("2026-09-30T10:00", "nowcast"),
+                          ("2026-09-27T10:00", "ensemble")):
+            j.conn.execute(
+                "INSERT INTO probability_log (ts, estimator, series, ticker, our_probability, "
+                "market_yes_cents, lead_hours, settled_yes, model) VALUES (?,?,?,?,?,?,?,?,?)",
+                (ts, "w", "KXHIGHNY", f"T-{ts}-{model}", 0.5, 40, 3.0, 1, model))
+        j.conn.commit()
+        assert len(fetch_rows(j.conn, "w")) == 3
+        kept = fetch_rows(j.conn, "w", model_since={"nowcast": "2026-09-29T12:00"})
+        assert sorted(r["ticker"] for r in kept) == ["T-2026-09-27T10:00-ensemble",
+                                                      "T-2026-09-30T10:00-nowcast"]
+        cfg = MarketSkillConfig.from_dict({"model_since": {"nowcast": "2026-09-29T12:00"}})
+        assert cfg.model_since == {"nowcast": "2026-09-29T12:00"}

@@ -45,7 +45,7 @@ def _norm_cdf(x: float) -> float:
 
 #: Bump when a model's maths or constants change, so every forecast and
 #: trade names the model that produced it (research brief section 24).
-MODEL_VERSIONS = {"ensemble": "1", "nowcast": "1"}
+MODEL_VERSIONS = {"ensemble": "1", "nowcast": "2"}
 
 #: Worst source tier behind each model's number (1 = the organisation that
 #: publishes it, 2 = an established redistributor - Open-Meteo).

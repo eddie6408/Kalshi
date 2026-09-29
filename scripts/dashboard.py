@@ -334,12 +334,14 @@ def _market_skill(conn) -> dict:
         with open(ROOT / "config.yaml", encoding="utf-8") as fh:
             raw = yaml.load(fh, Loader=_StrictLoader) or {}
         cfg = MarketSkillConfig.from_dict(raw.get("market_skill"))
-        cells = compute_cells(fetch_rows(conn, "weather_temperature", cfg.since), cfg)
+        cells = compute_cells(fetch_rows(conn, "weather_temperature", cfg.since,
+                                         model_since=cfg.model_since), cfg)
         # Package 3a: the same comparison against the PRODUCTION book, shown
         # beside the demo one. The gate still decides on demo prices.
         try:
             prod = compute_cells(fetch_rows(conn, "weather_temperature", cfg.since,
-                                            benchmark="production"), cfg)
+                                            benchmark="production",
+                                            model_since=cfg.model_since), cfg)
         except Exception:  # noqa: BLE001
             prod = {}
     except Exception as exc:  # noqa: BLE001

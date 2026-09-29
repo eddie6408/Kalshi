@@ -80,6 +80,9 @@ class MarketSkillConfig:
     margin: float = 0.005
     z: float = 2.0
     refresh_seconds: float = 300.0
+    #: per model, forecasts made before this are ignored (e.g. a model
+    #: version with a known defect): {"nowcast": "2026-09-29T..."}
+    model_since: dict = None
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "MarketSkillConfig":
@@ -92,6 +95,7 @@ class MarketSkillConfig:
             margin=float(d.get("margin", 0.005)),
             z=float(d.get("z", 2.0)),
             refresh_seconds=float(d.get("refresh_seconds", 300.0)),
+            model_since={str(k): str(v) for k, v in (d.get("model_since") or {}).items()},
         )
 
 
@@ -142,7 +146,7 @@ BENCHMARK_COLUMNS = {
 
 
 def fetch_rows(conn, estimator: str | None = None, since: str = "",
-               benchmark: str = "demo") -> list[dict]:
+               benchmark: str = "demo", model_since: dict | None = None) -> list[dict]:
     """Settled forecasts that have a market price to compare against."""
     ask_col, bid_col = BENCHMARK_COLUMNS[benchmark]
     where = ["settled_yes IS NOT NULL", f"{ask_col} IS NOT NULL",
@@ -152,6 +156,9 @@ def fetch_rows(conn, estimator: str | None = None, since: str = "",
         where.append("estimator = ?"); args.append(estimator)
     if since:
         where.append("ts >= ?"); args.append(since)
+    for model, start in (model_since or {}).items():
+        where.append("NOT (COALESCE(model, '') = ? AND ts < ?)")
+        args += [model, start]
     # Whichever benchmark was asked for is returned under the demo column
     # names, so everything downstream reads one shape.
     sql = ("SELECT series, ticker, lead_hours, our_probability, settled_yes, "
@@ -170,7 +177,9 @@ def compare_benchmarks(conn, estimator: str | None = None, since: str = "",
     out = {}
     for name in BENCHMARK_COLUMNS:
         try:
-            out[name] = compute_cells(fetch_rows(conn, estimator, since, name), cfg)
+            out[name] = compute_cells(fetch_rows(
+                conn, estimator, since, name,
+                model_since=(cfg.model_since if cfg else None)), cfg)
         except Exception as exc:  # noqa: BLE001
             log.debug("MARKET SKILL  %s benchmark unavailable: %s", name, exc)
             out[name] = {}
@@ -252,7 +261,8 @@ class MarketSkillGate:
                 and (now - self._at).total_seconds() < self.cfg.refresh_seconds):
             return self._cells
         try:
-            rows = fetch_rows(self.journal.conn, self.estimator, self.cfg.since)
+            rows = fetch_rows(self.journal.conn, self.estimator, self.cfg.since,
+                              model_since=self.cfg.model_since)
             self._cells = compute_cells(rows, self.cfg)
         except Exception as exc:  # noqa: BLE001
             # A read that fails must not stop trading, and must not pretend.

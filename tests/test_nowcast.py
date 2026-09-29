@@ -31,7 +31,7 @@ def model(values_by_hour, day=DAY):
     return [(at(h, day=day), v) for h, v in values_by_hour.items()]
 
 
-FLAT = NowcastConfig(sigma_base_f=1.0, sigma_per_hour_f=0.0, observation_margin_f=0.0)
+FLAT = NowcastConfig(sigma_base_f=1.0, sigma_per_hour_f=0.0, observation_sd_f=0.0)
 
 
 # ------------------------------------------------------------- the maths
@@ -49,7 +49,7 @@ def test_after_the_peak_the_high_is_what_was_recorded():
 def test_before_the_peak_the_remaining_hours_decide():
     obs = [(at(9), 64.0), (at(10), 66.0)]
     m = model({10: 66.0, 12: 71.0, 14: 74.0, 16: 73.0, 18: 69.0})
-    nc = compute(at(10, 30), DAY, "high", obs, m, NowcastConfig(observation_margin_f=0.0))
+    nc = compute(at(10, 30), DAY, "high", obs, m, NowcastConfig(observation_sd_f=0.0))
     assert abs(nc.mean - 74.0) < 1e-9                     # model peak, no bias
     assert nc.hours_to_peak > 3
     assert nc.probability_between(None, 70) < 0.05
@@ -100,6 +100,48 @@ def test_daily_lows_are_the_mirror_image():
     assert 0.0 < nc.probability_between(None, 50) < 1.0
 
 
+# ------------------------------------------- version 2: the 26-27 Sep misses
+def _evening(observed, hours_left=None):
+    """After the peak: `observed` recorded, the rest of the evening cooler."""
+    obs = [(at(14), observed - 3), (at(16), observed), (at(18), observed - 4)]
+    m = model(hours_left if hours_left is not None else {h: observed - 8 for h in range(20, 24)})
+    return compute(at(19, 30), DAY, "high", obs, m, NowcastConfig())
+
+
+def test_the_official_high_can_land_above_the_highest_reading():
+    """DEN 27 Sep: station max 82.4F, official 83. Version 1 said 80-81 at
+    99.5%. The bucket the reading rounds down to must not be near-certain."""
+    nc = _evening(82.4)
+    assert nc.probability_between(80, 81) < 0.20          # v1: 0.995
+    assert nc.probability_between(82, 83) > 0.70          # where 83 landed
+
+
+def test_a_reading_on_a_bucket_edge_is_never_near_certain():
+    """LAX 26 Sep: max 81.0, official 81; v1 put 79-80 at 99.5%.
+    AUS 26 Sep: max 93.2, official 94; v1 put '93 or below' at 99.5%."""
+    lax = _evening(81.0)
+    assert lax.probability_between(79, 80) < 0.35
+    assert lax.probability_between(81, 82) > 0.6
+    aus = _evening(93.2)
+    assert 0.5 < aus.probability_between(None, 93) < 0.8
+
+
+def test_with_no_spread_it_is_the_reading_exactly():
+    obs = [(at(15), 80.0)]
+    nc = compute(at(21), DAY, "high", obs, model({22: 70.0}),
+                 NowcastConfig(observation_sd_f=0.0, sigma_base_f=0.5, sigma_per_hour_f=0.0))
+    assert nc.probability_between(80, 80) > 0.99
+
+
+def test_nothing_left_to_come_still_carries_the_reports_uncertainty():
+    obs = [(at(15), 80.0)]
+    nc = compute(at(23, 59), DAY, "high", obs, model({12: 70.0}), NowcastConfig())
+    assert nc.mean is None
+    assert 0.3 < nc.probability_between(80, 80) < 0.6
+    total = sum(nc.probability_between(t, t) for t in range(70, 91))
+    assert abs(total - 1.0) < 1e-6
+
+
 def test_no_model_hours_for_the_day_means_no_nowcast():
     assert compute(at(10), DAY, "high", [(at(9), 60.0)],
                    model({10: 60.0}, day=DAY + dt.timedelta(days=1))) is None
@@ -115,7 +157,7 @@ def test_the_shipped_config_parses():
     raw = yaml.load(open(Path(__file__).resolve().parents[1] / "config.yaml"),
                     Loader=_StrictLoader)
     c = NowcastConfig.from_dict(raw["weather"]["nowcast"])
-    assert c.enabled and c.max_lead_hours == 12 and c.observation_margin_f == 1.0
+    assert c.enabled and c.max_lead_hours == 12 and c.observation_sd_f == 0.8
 
 
 # ------------------------------------------------------- data plumbing
