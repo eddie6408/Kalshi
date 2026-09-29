@@ -315,6 +315,13 @@ def test_degree_days_use_the_published_figure_for_observed_days():
 def test_hourly_target_and_sd():
     t = target_utc({"at_time": "7 AM EDT", "window_start": "2026-09-29"}, "America/New_York")
     assert t == datetime(2026, 9, 29, 11, 0, tzinfo=timezone.utc)
+    # Los Angeles markets are written in EASTERN time: 7 AM EDT, not 7 AM PDT
+    la = target_utc({"at_time": "7 AM EDT", "window_start": "2026-09-29"}, "America/Los_Angeles")
+    assert la == datetime(2026, 9, 29, 11, 0, tzinfo=timezone.utc)
+    assert target_utc({"at_time": "3 PM PDT", "window_start": "2026-09-29"}) == \
+        datetime(2026, 9, 29, 22, 0, tzinfo=timezone.utc)
+    assert target_utc({"at_time": "3 PM", "window_start": "2026-01-15"}) == \
+        datetime(2026, 1, 15, 20, 0, tzinfo=timezone.utc)          # no zone: ET (EST in Jan)
     assert sd_for_lead(0.5) < sd_for_lead(5) < sd_for_lead(30)
 
 

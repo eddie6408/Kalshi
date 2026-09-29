@@ -156,7 +156,8 @@ def wx_research(cfg: dict) -> dict | None:
         life = rows(c, "SELECT cls, status, source, COUNT(*) n FROM wx_contracts "
                        "WHERE market_status='open' GROUP BY cls, status, source")
         latest = rows(c, "SELECT r.* FROM wx_model_runs r JOIN (SELECT ticker, MAX(id) mid FROM "
-                         "wx_model_runs GROUP BY ticker) l ON l.mid=r.id")
+                         "wx_model_runs WHERE method NOT LIKE 'VOID%' GROUP BY ticker) l "
+                         "ON l.mid=r.id")
         runs = {r["ticker"]: r for r in latest}
         contracts = rows(c, "SELECT ticker, event_ticker, series, cls, station, location, source, "
                             "operator, threshold, threshold_hi, run_k, window_start, window_end, "

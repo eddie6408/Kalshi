@@ -65,12 +65,27 @@ def load_indexes(path: str | Path) -> dict:
         return {}
 
 
-def target_utc(c: dict, tz_name: str) -> datetime | None:
-    hm = parse_local_hour(c.get("at_time") or "")
+#: The rules state the clock time with its zone ("Coastal Los Angeles ... at
+#: 7 AM EDT"): Kalshi writes every hourly market in Eastern time, whatever the
+#: city. The certification: "Where a timezone is not otherwise specified, ET
+#: shall be assumed." Never the index city's own zone.
+ZONES = {"EDT": "America/New_York", "EST": "America/New_York", "ET": "America/New_York",
+         "CDT": "America/Chicago", "CST": "America/Chicago", "CT": "America/Chicago",
+         "MDT": "America/Denver", "MST": "America/Denver", "MT": "America/Denver",
+         "PDT": "America/Los_Angeles", "PST": "America/Los_Angeles", "PT": "America/Los_Angeles"}
+
+
+def target_utc(c: dict, tz_name: str | None = None) -> datetime | None:
+    """The UTC minute an hourly contract measures. `tz_name` is ignored
+    unless the rules give no zone at all - then ET, per the certification."""
+    at = c.get("at_time") or ""
+    hm = parse_local_hour(at)
     if not hm or not c.get("window_start"):
         return None
+    abbr = at.strip().split()[-1].upper() if at.strip().split() else ""
+    zone = ZONES.get(abbr, "America/New_York")
     d = datetime.fromisoformat(c["window_start"])
-    local = d.replace(hour=hm[0], minute=hm[1], tzinfo=ZoneInfo(tz_name))
+    local = d.replace(hour=hm[0], minute=hm[1], tzinfo=ZoneInfo(zone))
     return local.astimezone(timezone.utc)
 
 

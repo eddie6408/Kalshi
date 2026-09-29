@@ -243,7 +243,8 @@ def class_report(store) -> dict:
     rows = store.query(
         "SELECT r.cls, r.ticker, r.prob, r.market_yes_bid b, r.market_yes_ask a, r.settled_yes y "
         "FROM wx_model_runs r JOIN (SELECT ticker, MAX(id) mid FROM wx_model_runs r2 "
-        "JOIN wx_contracts c USING (ticker) WHERE r2.at <= c.close_time GROUP BY ticker) last "
+        "JOIN wx_contracts c USING (ticker) WHERE r2.at <= c.close_time "
+        "AND r2.method NOT LIKE 'VOID%' GROUP BY ticker) last "
         "ON last.mid = r.id WHERE r.settled_yes IS NOT NULL")
     by: dict[str, list] = defaultdict(list)
     for r in rows:
