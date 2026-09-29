@@ -356,6 +356,15 @@ class ArbitrageEngine:
                                             ev.mutually_exclusive)
             report.near_miss_count += self.scanner.near_miss_count()
             report.near_misses.extend(self.scanner.near_misses(5))
+            # Packages 6/7: does this structure exist on PRODUCTION? Queued,
+            # checked on the prod-arb worker's own clock and budget.
+            prod_arb = getattr(self, "prod_arb", None)
+            if prod_arb is not None:
+                try:
+                    prod_arb.observe(ev.event_ticker, ev.markets, list(books),
+                                     found, ev.mutually_exclusive)
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("PROD ARB  could not queue %s: %s", ev.event_ticker, exc)
 
             for strategy in self.forecasts:
                 if strategy.name in suspended:

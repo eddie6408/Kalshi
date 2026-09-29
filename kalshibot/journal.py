@@ -389,6 +389,42 @@ CREATE TABLE IF NOT EXISTS maker_shadow (
 );
 CREATE INDEX IF NOT EXISTS idx_maker_shadow_state ON maker_shadow(state, ticker);
 
+-- Packages 6/7: the FAKE-MONEY account on production prices (paper_live.py).
+-- One row per leg; an arbitrage basket shares group_id. Times: unix seconds.
+CREATE TABLE IF NOT EXISTS paper_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opened_at REAL NOT NULL,
+    kind TEXT NOT NULL,              -- FORECAST | ARB
+    group_id TEXT NOT NULL,
+    strategy TEXT, event_id TEXT,
+    ticker TEXT NOT NULL,
+    side TEXT NOT NULL,
+    contracts INTEGER NOT NULL,
+    price_cents REAL NOT NULL,       -- vwap walking the production book
+    cost_usd REAL NOT NULL,
+    fee_usd REAL NOT NULL,
+    expected_edge_usd REAL,          -- the strategy's EV at entry, this leg
+    probability_yes REAL, confidence REAL, lead_hours REAL, model TEXT,
+    gate_blocked INTEGER DEFAULT 0,  -- 1: the market-skill gate would block it
+    note TEXT,
+    book_age_s REAL,
+    state TEXT NOT NULL,             -- OPEN, SETTLED, VOID
+    settled_at REAL, settled_yes INTEGER, payout_usd REAL, pnl_usd REAL,
+    code_version TEXT, config_version TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_paper_state ON paper_positions(state, ticker);
+
+-- Does an arbitrage the demo sweep inspected exist on PRODUCTION books?
+CREATE TABLE IF NOT EXISTS prod_arb_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    event_id TEXT NOT NULL,
+    markets INTEGER, prod_books INTEGER,
+    demo_found INTEGER, demo_best_edge REAL,
+    prod_found INTEGER, prod_accepted INTEGER, prod_best_edge REAL,
+    prod_near_miss_gap REAL
+);
+
 -- An operator acknowledging a tripped consecutive-loss breaker. Losses
 -- closed before the latest row no longer count toward the run.
 CREATE TABLE IF NOT EXISTS breaker_resets (
@@ -1424,6 +1460,43 @@ class Journal:
             [fields[c] for c in cols] + [row_id])
         self.conn.commit()
 
+    # ---------------- live paper account (packages 6/7) ----------------
+    _PAPER_COLUMNS = (
+        "opened_at", "kind", "group_id", "strategy", "event_id", "ticker", "side",
+        "contracts", "price_cents", "cost_usd", "fee_usd", "expected_edge_usd",
+        "probability_yes", "confidence", "lead_hours", "model", "gate_blocked",
+        "note", "book_age_s", "state", "settled_at", "settled_yes", "payout_usd",
+        "pnl_usd", "code_version", "config_version")
+    _PROD_ARB_COLUMNS = ("ts", "event_id", "markets", "prod_books", "demo_found",
+                         "demo_best_edge", "prod_found", "prod_accepted",
+                         "prod_best_edge", "prod_near_miss_gap")
+
+    def _insert(self, table: str, allowed: tuple, row: dict) -> int:
+        cols = [c for c in allowed if c in row]
+        cur = self.conn.execute(
+            f"INSERT INTO {table} ({', '.join(cols)}) VALUES "
+            f"({', '.join('?' for _ in cols)})", [row[c] for c in cols])
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def paper_insert(self, row: dict) -> int:
+        return self._insert("paper_positions", self._PAPER_COLUMNS, row)
+
+    def paper_update(self, row_id: int, fields: dict) -> None:
+        cols = [c for c in fields if c in self._PAPER_COLUMNS]
+        if cols:
+            self.conn.execute(
+                f"UPDATE paper_positions SET {', '.join(c + '=?' for c in cols)} "
+                f"WHERE id=?", [fields[c] for c in cols] + [row_id])
+            self.conn.commit()
+
+    def paper_rows(self, where: str = "1=1", args: tuple = ()) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            f"SELECT * FROM paper_positions WHERE {where} ORDER BY id", args)]
+
+    def prod_arb_insert(self, row: dict) -> int:
+        return self._insert("prod_arb_checks", self._PROD_ARB_COLUMNS, row)
+
     def maker_shadow_rows(self, where: str = "1=1", args: tuple = (),
                           limit: int = 5000) -> list[dict]:
         return [dict(r) for r in self.conn.execute(
@@ -1664,6 +1737,6 @@ _WRITERS = ("log_decision", "log_trade", "close_open_trades", "close_trade",
             "log_source_observation", "log_data_check", "save_source_health",
             "record_settlement_sources", "ledger_record", "ledger_decide",
             "set_outcome", "prune_ledger_records", "maker_shadow_insert",
-            "maker_shadow_update")
+            "maker_shadow_update", "paper_insert", "paper_update", "prod_arb_insert")
 for _name in _WRITERS:
     setattr(Journal, _name, _locked(getattr(Journal, _name)))

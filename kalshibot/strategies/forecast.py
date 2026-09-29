@@ -310,7 +310,10 @@ class ForecastStrategy:
                     st = _ledger.stage_for(reason) if reason else None
                     stage = st.value if st else ("UNMAPPED" if reason else "")
                 info = {"q": est.probability_yes, "stage": stage, "reason": reason,
-                        "lead": ev.get("lead_hours"),
+                        "lead": ev.get("lead_hours"), "conf": est.confidence,
+                        # in memory only - the live paper account re-prices
+                        # this exact market and estimate on the production book
+                        "market": m, "estimate": est,
                         "series": m.series_ticker or m.ticker.split("-")[0],
                         "close_ts": m.close_time.timestamp() if m.close_time else None}
             self.production_watch.watch(m.ticker, info)

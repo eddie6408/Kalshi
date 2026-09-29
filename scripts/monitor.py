@@ -178,6 +178,22 @@ def render(conn, db: Path, rows: int) -> str:
             out.append(f"{D}    rejected by stage: " + "  ".join(
                 f"{k or '?'} {v}" for k, v in sorted(stages.items(), key=lambda x: -x[1])) + X)
 
+    # ---------------- live paper account (packages 6/7) ----------------
+    # Fake money on production prices. No orders are sent.
+    if _table(conn, "paper_positions"):
+        pr = conn.execute(
+            "SELECT state, COUNT(*) n, SUM(COALESCE(pnl_usd,0)) pnl, "
+            "SUM(cost_usd + fee_usd) tied FROM paper_positions GROUP BY state").fetchall()
+        if pr:
+            by = {r["state"]: r for r in pr}
+            realised = by["SETTLED"]["pnl"] if "SETTLED" in by else 0.0
+            n_open = by["OPEN"]["n"] if "OPEN" in by else 0
+            tied = by["OPEN"]["tied"] if "OPEN" in by else 0.0
+            colour = G if realised > 0 else (R if realised < 0 else D)
+            out.append(f"  {B}LIVE PAPER{X} {D}fake money, production prices{X}  "
+                       f"realised {colour}{realised:+.2f}{X}  open {n_open} "
+                       f"(${tied:.2f})  settled {by['SETTLED']['n'] if 'SETTLED' in by else 0}")
+
     # ---------------- maker shadow (package C2, phase M0) ----------------
     # Simulated resting orders on the production tape. No orders are sent.
     if _table(conn, "maker_shadow"):

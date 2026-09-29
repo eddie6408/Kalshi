@@ -802,6 +802,26 @@ maker_shadow:
   max_lead_hours: 24        # wider than the strategy's 6h, to measure sooner
   drift_minutes: [5, 30, 60]
 
+# Packages 6/7 (approved 2026-09-29): a FAKE-MONEY account on PRODUCTION
+# prices, alongside demo trading (which is unchanged). Weather entries are
+# priced by the same code and config as the live strategy, handed the
+# production book, then the same profitability gate; the market-skill gate is
+# recorded (gate_blocked) but not obeyed, so the report can show what the
+# model would have made. Arbitrage: every event the demo sweep inspects is
+# re-checked on production books; one the gate accepts is paper-traded.
+# Taker fills at the production book, held to settlement. NO ORDERS.
+# Report: scripts/paper_report.py.
+paper_live:
+  enabled: true
+  starting_balance_usd: 500
+  max_open_positions: 30
+  max_total_exposure_usd: 250
+  include_gate_blocked: true
+  arb_check:
+    enabled: true
+    max_events_per_sweep: 60
+    requests_per_second: 1
+
 # How the work is divided. Each worker runs on its OWN clock, in this one
 # process, so a strategy that needs six series does not wait on one that needs
 # the whole exchange.

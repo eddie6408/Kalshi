@@ -34,6 +34,7 @@ from kalshibot.forecast_scoring import score_pending
 from kalshibot.journal import Journal
 from kalshibot.maker_shadow import MakerShadow, MakerShadowConfig
 from kalshibot.market_state import MarketState
+from kalshibot.paper_live import PaperConfig, PaperLiveAccount, ProdArbCheck
 from kalshibot.prodwatch import ProductionWatch, WatchConfig
 from kalshibot.recorder import Recorder, RecorderConfig
 from kalshibot.versioning import versions
@@ -531,6 +532,37 @@ def main() -> int:
                                        fee_schedule=FeeSchedule(_Reader(), enforce=False))
             maker_shadow.load()
             prod_watch.listeners.append(maker_shadow)
+    # ---- packages 6/7: a fake-money account on production prices ---------
+    # Alongside demo trading, not instead of it. Same pricing code as the live
+    # strategy, handed the production book; arbitrage re-checked on
+    # production books. No order can be sent from here.
+    paper_cfg = PaperConfig.from_dict(settings.section("paper_live"))
+    paper_live = None
+    prod_arb = None
+    if paper_cfg.enabled:
+        from kalshibot.strategies.forecast import ForecastStrategy
+        clone, skill = None, None
+        if engine.forecasts:
+            s0 = engine.forecasts[0]
+            clone = ForecastStrategy(s0.estimator, s0.fees, s0.cfg, journal=None,
+                                     gates=s0.gates, monitor=s0.monitor,
+                                     market_skill=None)
+            skill = s0.market_skill
+        paper_live = PaperLiveAccount(journal, engine.gate, clone, market_skill=skill,
+                                      cfg=paper_cfg, versions=run_versions)
+        if prod_watch is not None:
+            prod_watch.listeners.append(paper_live)
+        if paper_cfg.arb_enabled:
+            from kalshibot.livebooks import LiveBookReader as _ArbReader
+            from kalshibot.strategies.arbitrage import StructuralArbitrageScanner
+            prod_arb = ProdArbCheck(
+                _ArbReader(),
+                StructuralArbitrageScanner(fees, settings.section("arbitrage")),
+                engine.gate, journal, paper_live, paper_cfg)
+            engine.prod_arb = prod_arb
+        print(f"{D}  live paper account: ${paper_cfg.starting_balance_usd:.0f} fake, "
+              f"production prices, no orders{X}")
+    if prod_watch is not None:
         print(f"{D}  production watch: books every {watch_cfg.book_interval_seconds:.0f}s, "
               f"prints every {watch_cfg.trades_interval_seconds:.0f}s, "
               f"<= {watch_cfg.max_requests_per_second:g} req/s (read only)"
@@ -601,6 +633,10 @@ def main() -> int:
             WorkerConfig.from_dict("production_watch",
                                    workers_cfg.get("production_watch"), 15.0),
             prod_watch.run_pass))
+    if prod_arb is not None:
+        supervisor.add(Worker(
+            WorkerConfig.from_dict("prod_arb", workers_cfg.get("prod_arb"), 60.0),
+            prod_arb.run_pass))
 
     # Execution quality: what would this order cost on a REAL book?
     #
@@ -699,6 +735,11 @@ def main() -> int:
                     maker_shadow.resolve(series_client)
                 except Exception as exc:  # noqa: BLE001
                     log.error("MAKER SHADOW  settlement pass failed: %s", exc)
+            if paper_live is not None:
+                try:
+                    paper_live.resolve(series_client)
+                except Exception as exc:  # noqa: BLE001
+                    log.error("PAPER LIVE  settlement pass failed: %s", exc)
             if rec_cfg.enabled:
                 recorder.prune()
             if updated:
@@ -756,6 +797,10 @@ def main() -> int:
                         log.info("RECORDER  %s", recorder.summary())
                     if engine.fee_schedule is not None:
                         log.info("FEES  %s", engine.fee_schedule.summary())
+                    if paper_live is not None:
+                        log.info("PAPER LIVE  %s", paper_live.summary())
+                    if prod_arb is not None:
+                        log.info("PROD ARB  %s", prod_arb.summary())
                     if prod_watch is not None:
                         log.info("PRODWATCH  %s%s", prod_watch.summary(),
                                  f" | maker shadow {maker_shadow.summary()}"
