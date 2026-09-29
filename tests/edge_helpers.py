@@ -35,7 +35,7 @@ def raw(sets=(0, 0), games=(2, 2), points=(1, 1), server="c1", status="live"):
 class EdgeHarness:
     def __init__(self, overrides=None):
         base = {"strategies": {k: {"enabled": False} for k in ("DIP", "REVERSAL", "MOMENTUM", "DOWNTREND")},
-                "edge": {"anchor_min_samples": 5}}
+                "edge": {"anchor_min_samples": 5, "observe_only": False}}   # the trading path stays tested
         if overrides:
             for k, v in overrides.items():
                 base[k] = {**base.get(k, {}), **v} if isinstance(v, dict) else v

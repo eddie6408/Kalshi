@@ -255,7 +255,8 @@ trades_max_pages = 3
 enabled = true
 version = "EDGE_ENGINE_V1"
 env = "PAPER_EDGE"
-observe_only = false              # V2 section 65: true = record would-be trades only, no paper orders
+observe_only = true               # V2 section 65: record would-be trades only, no paper orders.
+                                  # true since 2026-09-29: EXP-006 KILL retired the fair-value approach
 base_serve = { ATP = 0.64, "ATP Challenger" = 0.62, ITF_M = 0.61, WTA = 0.56, "WTA Challenger" = 0.555, ITF_W = 0.55, men = 0.63, women = 0.555 }
 anchor_window_s = 600             # serve strengths implied by the market over the last 10 min ...
 anchor_exclude_s = 60             # ... excluding the last minute (recent moves are what we judge)

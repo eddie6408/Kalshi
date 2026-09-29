@@ -45,8 +45,44 @@ fair-value gap is shown to predict movement (section 81) and to be executable
 EDGE_ENGINE_V1 is FROZEN while EXP-003 (the A/B) runs: changing it would
 contaminate the experiment. V2 changes go into a new version.
 
+## Outcome 2026-09-29: fair-value approach retired (EXP-006 KILL)
+
+Kill rule registered before the study ran (see `lvt experiment list`):
+no variant reaches disagreement-set Brier <= market Brier on the DEV half,
+or the dev-chosen variant fails on TEST -> retire.
+
+`lvt study model` rebuilt P(player 1 wins) from tape for 72 settled matches
+(7,598 observations, chronological 36/36 split; player mapping checked
+against the payload's winner field: 55 OK, 0 flipped). Model minus market
+Brier where they disagree by >=3c:
+
+| variant | DEV | TEST | ALL (95% CI, match bootstrap) |
+|---|---|---|---|
+| V1 anchor [t-600, t-60] (live) | +0.0093 | +0.0129 | +0.0110 [0.003, 0.020] |
+| anchor [t-300, t-10] | +0.0068 | +0.0059 | +0.0064 [0.002, 0.011] |
+| anchor [t-1800, t-60] | +0.0144 | +0.0194 | +0.0167 [0.000, 0.034] |
+| in-match serve stats (market-free) | +0.0610 | +0.0194 | +0.0393 [-0.006, 0.081] |
+| fixed early-match anchor | +0.0197 | +0.0244 | +0.0219 [-0.002, 0.046] |
+
+Every variant is worse than the market on both halves. The market does
+drift toward the model afterwards (about +0.5-1c at 30-120 s, the same effect
+as the gap study), but by far less than the gap, and outcomes side with the
+market: the model is directionally informative for a few seconds and
+overconfident in size. Consequences, as pre-registered:
+
+* `[edge] observe_only = true`: EDGE_ENGINE_V1 records SHADOW signals and
+  dislocations, places no paper orders. BASELINE_V1 trading was stopped the
+  same day. Both arms of EXP-003 are closed; the bot is a data recorder.
+* No new fair-value trading logic. EXP-005 (built on the same reference)
+  is withdrawn.
+* Still open: EXP-007 longshot bias (passive; 55 of 100 matches needed;
+  observed 0.236 vs price 0.176, breakeven 0.200, CI [0.144, 0.363]).
+* The only idea left on the table is passive market-making in thin tennis
+  markets (spread capture, no fair-value claim). It needs its own
+  hypothesis and kill rule and has not been started.
+
 ## Hypotheses queued for V2 (not implemented)
-* EXP-005 pool order flow across mirror markets: YES on player A and NO on
+* (WITHDRAWN 2026-09-29, see above) EXP-005 pool order flow across mirror markets: YES on player A and NO on
   player B are the same risk; V1 reads flow per market, so selling in one
   market does not block the mirror trade (found by the section 61 conflicting-
   flow test).
@@ -63,7 +99,7 @@ contaminate the experiment. V2 changes go into a new version.
   outcomes (0), dense fair-value history (134 throttled rows).
 
 ## Commands
-lvt study gap|decay|calibration|funnel|baseline|scores|errors|latency [--start ISO --end ISO --env PAPER_EDGE]
+lvt study gap|decay|calibration|funnel|baseline|scores|errors|latency|model [--start ISO --end ISO --env PAPER_EDGE]
 lvt validation
 lvt experiment add --name ... --hypothesis ... --disproof ... | list | result --id ... --status ...
 lvt ab
