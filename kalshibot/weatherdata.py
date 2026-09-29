@@ -242,6 +242,49 @@ class WeatherData:
         return dataclasses.replace(fc, lead_hours=lead)
 
     # ------------------------------------------------------------------
+    def model_values(self, lat: float, lon: float, tz_name: str, target_date: dt.date,
+                     kind: str, models) -> dict[str, float]:
+        """Each named model's daily high (or low) for `target_date` at this
+        point: NBM, GFS, ECMWF IFS / AIFS, HRRR, GEM, ICON (weather_blend.py).
+        One request per location for all models and three days, cached like
+        the ensemble. {} when unavailable - the blend then simply does not
+        apply and the ensemble prices the market as before."""
+        key = ("models", round(lat, 3), round(lon, 3), tz_name)
+        daily = self.cache.get(key)
+        if daily is None:
+            params = {"latitude": lat, "longitude": lon,
+                      "daily": "temperature_2m_max,temperature_2m_min",
+                      "models": ",".join(models), "temperature_unit": "fahrenheit",
+                      "timezone": tz_name, "forecast_days": 3, "past_days": 1}
+            try:
+                with self.monitor.track("open_meteo_models") as call:
+                    r = self._session.get(HRRR_URL, params=params, timeout=self.timeout)
+                    call.status = r.status_code
+                    r.raise_for_status()
+                    payload = r.json() or {}
+                    if payload.get("error"):
+                        call.ok = False
+                        call.error = str(payload.get("reason") or "error")
+                        return {}
+                    daily = payload.get("daily") or {}
+                    call.data_time = dt.datetime.now(dt.timezone.utc).isoformat()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("multi-model forecast unavailable: %s", exc)
+                return {}
+            self.cache.put(key, daily)
+        days = daily.get("time") or []
+        try:
+            i = days.index(target_date.isoformat())
+        except ValueError:
+            return {}
+        var = "temperature_2m_max" if kind == "high" else "temperature_2m_min"
+        out = {}
+        for m in models:
+            col = daily.get(f"{var}_{m}") or daily.get(var if len(models) == 1 else "") or []
+            if i < len(col) and col[i] is not None:
+                out[m] = float(col[i])
+        return out
+
     def hourly_model(self, lat: float, lon: float, tz_name: str) -> HourlyModel | None:
         """HRRR hourly temperatures around now: 12 hours back, 30 ahead."""
         key = (round(lat, 3), round(lon, 3), tz_name)

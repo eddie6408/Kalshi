@@ -217,7 +217,8 @@ def observed_daily_max(session, station: str, tz_name: str,
 def score_pending(conn: sqlite3.Connection, session, tz_by_series: dict,
                   now: dt.datetime | None = None, limit: int = 40,
                   cli_by_station: dict | None = None,
-                  monitor: _sources.SourceMonitor | None = None) -> tuple[int, int]:
+                  monitor: _sources.SourceMonitor | None = None,
+                  kind_by_series: dict | None = None) -> tuple[int, int]:
     """Fill actual_f for every forecast whose target day is safely over.
 
     Returns (rows updated, days looked up). Observations are fetched once per
@@ -230,6 +231,9 @@ def score_pending(conn: sqlite3.Connection, session, tz_by_series: dict,
     observations only (the original behaviour).
     """
     cli_by_station = cli_by_station or {}
+    # A daily-LOW series is scored against the day's official minimum. Before
+    # the low series existed everything was a high, which is still the default.
+    kind_by_series = kind_by_series or {}
     has_source_col = "actual_source" in {
         r[1] for r in conn.execute("PRAGMA table_info(forecasts)")}
     now = now or dt.datetime.now(dt.timezone.utc)
@@ -252,16 +256,17 @@ def score_pending(conn: sqlite3.Connection, session, tz_by_series: dict,
             target + dt.timedelta(days=1), dt.time(0, 0), tzinfo=tz)
         if now < day_end + dt.timedelta(hours=SETTLE_AFTER_HOURS):
             continue
-        wanted.setdefault((r["station"], tz_name, target), []).append(r["id"])
+        kind = kind_by_series.get(r["series"], "high")
+        wanted.setdefault((r["station"], tz_name, target, kind), []).append(r["id"])
 
     updated = looked_up = 0
-    for (station, tz_name, target), ids in list(wanted.items())[:limit]:
+    for (station, tz_name, target, kind), ids in list(wanted.items())[:limit]:
         looked_up += 1
         actual, used = None, "nws_observations"
         location = cli_by_station.get(station)
         if location:
             actual, _oid = official_daily_extreme(session, location, target,
-                                                  "high", monitor)
+                                                  kind, monitor)
             used = "nws_climate_report"
             if actual is None:
                 day_end = dt.datetime.combine(
@@ -274,10 +279,10 @@ def score_pending(conn: sqlite3.Connection, session, tz_by_series: dict,
                             "observations", station, target, location,
                             FALLBACK_AFTER_HOURS)
                 used = "nws_observations"
-        if actual is None:
+        if actual is None and kind == "high":
             actual = observed_daily_max(session, station, tz_name, target, monitor)
         if actual is None:
-            continue
+            continue          # a low has no hourly fallback: wait for the report
         if has_source_col:
             conn.executemany(
                 "UPDATE forecasts SET actual_f=?, actual_source=? WHERE id=?",
@@ -286,8 +291,8 @@ def score_pending(conn: sqlite3.Connection, session, tz_by_series: dict,
             conn.executemany("UPDATE forecasts SET actual_f=? WHERE id=?",
                              [(actual, i) for i in ids])
         updated += len(ids)
-        log.info("SCORING  %s %s: %s %.1fF (%d forecast%s)",
-                 station, target,
+        log.info("SCORING  %s %s %s: %s %.1fF (%d forecast%s)",
+                 station, target, kind,
                  "official" if used == "nws_climate_report" else "observed",
                  actual, len(ids), "" if len(ids) == 1 else "s")
     if updated:

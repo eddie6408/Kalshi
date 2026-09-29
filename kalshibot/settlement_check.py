@@ -104,44 +104,50 @@ class TWCSettlement:
                 if row is None or row["status"] not in FINAL or row["max"] is None:
                     stats["pending"] += 1
                     continue
-                key = (icao, day, row["status"], row["max"])
-                if key not in self._seen:
-                    self._seen.add(key)
-                    _sources.MONITOR.observe(
-                        "twc_settlement", data_type="settlement_daily_max_f",
-                        subject=icao.upper(), target_date=day.isoformat(),
-                        value=float(row["max"]),
-                        value_json={"status": row["status"], "min": row["min"], "cli": row["cli"]},
-                        data_time=day.isoformat(),
-                        retrieved_at=datetime.now(timezone.utc).isoformat())
-                    stats["recorded"] += 1
-                nws = _latest_cli(conn, cli, day)
-                if nws is None:
-                    continue
-                if abs(float(nws) - float(row["max"])) < 0.5:
-                    stats["matched"] += 1
-                else:
-                    stats["mismatched"] += 1
-                    msg = (f"{icao} {day}: The Weather Company (settles Kalshi) says "
-                           f"{row['max']}F, the NWS climate report says {nws:g}F. Scoring uses "
-                           f"the climate report - check which the market resolved on.")
-                    log.warning("SETTLE CHECK  %s", msg)
-                    ALERTS.send(today_key("twc-mismatch", f"{icao}:{day}"),
-                                f"Weather settlement mismatch: {icao}", msg,
-                                priority="high", tags="warning")
+                for kind, field_ in (("max", "max"), ("min", "min")):
+                    value = row.get(field_)
+                    if value is None:
+                        continue
+                    key = (icao, day, kind, row["status"], value)
+                    if key not in self._seen:
+                        self._seen.add(key)
+                        _sources.MONITOR.observe(
+                            "twc_settlement", data_type=f"settlement_daily_{kind}_f",
+                            subject=icao.upper(), target_date=day.isoformat(),
+                            value=float(value),
+                            value_json={"status": row["status"], "cli": row["cli"]},
+                            data_time=day.isoformat(),
+                            retrieved_at=datetime.now(timezone.utc).isoformat())
+                        stats["recorded"] += 1
+                    nws = _latest_cli(conn, cli, day, kind)
+                    if nws is None:
+                        continue
+                    if abs(float(nws) - float(value)) < 0.5:
+                        stats["matched"] += 1
+                    else:
+                        stats["mismatched"] += 1
+                        msg = (f"{icao} {day} daily {kind}: The Weather Company (settles "
+                               f"Kalshi) says {value}F, the NWS climate report says "
+                               f"{nws:g}F. Scoring uses the climate report - check which "
+                               f"the market resolved on.")
+                        log.warning("SETTLE CHECK  %s", msg)
+                        ALERTS.send(today_key("twc-mismatch", f"{icao}:{day}:{kind}"),
+                                    f"Weather settlement mismatch: {icao}", msg,
+                                    priority="high", tags="warning")
         if stats["recorded"] or stats["mismatched"]:
             log.info("SETTLE CHECK  weather: %s", stats)
         return stats
 
 
-def _latest_cli(conn, cli: str | None, day: date) -> float | None:
+def _latest_cli(conn, cli: str | None, day: date, kind: str = "max") -> float | None:
     if not cli:
         return None
     try:
         row = conn.execute(
             "SELECT value FROM source_observations WHERE source_id='nws_climate_report' "
-            "AND data_type='official_daily_max_f' AND subject=? AND target_date=? "
-            "ORDER BY id DESC LIMIT 1", ("CLI" + cli, day.isoformat())).fetchone()
+            "AND data_type=? AND subject=? AND target_date=? "
+            "ORDER BY id DESC LIMIT 1",
+            (f"official_daily_{kind}_f", "CLI" + cli, day.isoformat())).fetchone()
     except Exception:  # noqa: BLE001
         return None
     return float(row[0]) if row and row[0] is not None else None

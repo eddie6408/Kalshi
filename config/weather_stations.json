@@ -1,0 +1,891 @@
+{
+ "built_at": "2026-09-29T07:47:01Z",
+ "sources": [
+  "Kalshi production /series + /markets rules_primary",
+  "weather.com/kalshi climate portal station list",
+  "api.weather.gov/stations"
+ ],
+ "stations": [
+  {
+   "icao": "KATL",
+   "cli": "ATL",
+   "city": "Atlanta",
+   "timezone": "America/New_York",
+   "latitude": 33.6403,
+   "longitude": -84.4269,
+   "name": "Atlanta, Hartsfield - Jackson Atlanta International Airport"
+  },
+  {
+   "icao": "KAUS",
+   "cli": "AUS",
+   "city": "Austin",
+   "timezone": "America/Chicago",
+   "latitude": 30.183,
+   "longitude": -97.6799,
+   "name": "Austin-Bergstrom International Airport"
+  },
+  {
+   "icao": "KBOS",
+   "cli": "BOS",
+   "city": "Boston",
+   "timezone": "America/New_York",
+   "latitude": 42.3606,
+   "longitude": -71.0106,
+   "name": "Boston, Logan International Airport"
+  },
+  {
+   "icao": "KCLL",
+   "cli": "CLL",
+   "city": "College Station",
+   "timezone": "America/Chicago",
+   "latitude": 30.5822,
+   "longitude": -96.3617,
+   "name": "College Station, Easterwood Field"
+  },
+  {
+   "icao": "KCMH",
+   "cli": "CMH",
+   "city": "Columbus",
+   "timezone": "America/New_York",
+   "latitude": 39.9907,
+   "longitude": -82.8769,
+   "name": "John Glenn Columbus International Airport"
+  },
+  {
+   "icao": "KCVG",
+   "cli": "CVG",
+   "city": "Cincinnati / Covington",
+   "timezone": "America/New_York",
+   "latitude": 39.0446,
+   "longitude": -84.6723,
+   "name": "Cincinnati/Northern Kentucky International Airport"
+  },
+  {
+   "icao": "KDCA",
+   "cli": "DCA",
+   "city": "Washington, DC",
+   "timezone": "America/New_York",
+   "latitude": 38.8483,
+   "longitude": -77.0342,
+   "name": "Washington/Reagan National Airport, DC"
+  },
+  {
+   "icao": "KDEN",
+   "cli": "DEN",
+   "city": "Denver",
+   "timezone": "America/Denver",
+   "latitude": 39.8466,
+   "longitude": -104.6562,
+   "name": "Denver, Denver International Airport"
+  },
+  {
+   "icao": "KDFW",
+   "cli": "DFW",
+   "city": "Dallas",
+   "timezone": "America/Chicago",
+   "latitude": 32.8974,
+   "longitude": -97.022,
+   "name": "Dallas/Fort Worth International Airport"
+  },
+  {
+   "icao": "KDJT",
+   "cli": "DJT",
+   "city": "West Palm Beach",
+   "timezone": "America/New_York",
+   "latitude": 26.6851,
+   "longitude": -80.0992,
+   "name": "President Donald J. Trump International Airport"
+  },
+  {
+   "icao": "KEWR",
+   "cli": "EWR",
+   "city": "Newark",
+   "timezone": "America/New_York",
+   "latitude": 40.6825,
+   "longitude": -74.1694,
+   "name": "Newark, Newark International Airport"
+  },
+  {
+   "icao": "KGNV",
+   "cli": "GNV",
+   "city": "Gainesville",
+   "timezone": "America/New_York",
+   "latitude": 29.6919,
+   "longitude": -82.2756,
+   "name": "Gainesville, Gainesville Regional Airport"
+  },
+  {
+   "icao": "KHOU",
+   "cli": "HOU",
+   "city": "Houston (Hobby)",
+   "timezone": "America/Chicago",
+   "latitude": 29.6375,
+   "longitude": -95.2825,
+   "name": "Houston, Houston Hobby Airport"
+  },
+  {
+   "icao": "KIAH",
+   "cli": "IAH",
+   "city": "Houston (Bush Intercontinental)",
+   "timezone": "America/Chicago",
+   "latitude": 29.9844,
+   "longitude": -95.3607,
+   "name": "Houston Intercontinental Airport"
+  },
+  {
+   "icao": "KJAX",
+   "cli": "JAX",
+   "city": "Jacksonville",
+   "timezone": "America/New_York",
+   "latitude": 30.4953,
+   "longitude": -81.6937,
+   "name": "Jacksonville International Airport"
+  },
+  {
+   "icao": "KLAS",
+   "cli": "LAS",
+   "city": "Las Vegas",
+   "timezone": "America/Los_Angeles",
+   "latitude": 36.0719,
+   "longitude": -115.1634,
+   "name": "Harry Reid International Airport"
+  },
+  {
+   "icao": "KLAX",
+   "cli": "LAX",
+   "city": "Los Angeles",
+   "timezone": "America/Los_Angeles",
+   "latitude": 33.9381,
+   "longitude": -118.3889,
+   "name": "Los Angeles, Los Angeles International Airport"
+  },
+  {
+   "icao": "KLEX",
+   "cli": "LEX",
+   "city": "Lexington",
+   "timezone": "America/New_York",
+   "latitude": 38.0339,
+   "longitude": -84.6115,
+   "name": "Lexington Blue Grass Airport"
+  },
+  {
+   "icao": "KMDW",
+   "cli": "MDW",
+   "city": "Chicago (Midway)",
+   "timezone": "America/Chicago",
+   "latitude": 41.7842,
+   "longitude": -87.7553,
+   "name": "Chicago, Chicago Midway Airport"
+  },
+  {
+   "icao": "KMIA",
+   "cli": "MIA",
+   "city": "Miami",
+   "timezone": "America/New_York",
+   "latitude": 25.7906,
+   "longitude": -80.3164,
+   "name": "Miami, Miami International Airport"
+  },
+  {
+   "icao": "KMKE",
+   "cli": "MKE",
+   "city": "Milwaukee",
+   "timezone": "America/Chicago",
+   "latitude": 42.955,
+   "longitude": -87.9044,
+   "name": "Milwaukee, General Mitchell International Airport"
+  },
+  {
+   "icao": "KMSP",
+   "cli": "MSP",
+   "city": "Minneapolis",
+   "timezone": "America/Chicago",
+   "latitude": 44.8831,
+   "longitude": -93.2289,
+   "name": "Minneapolis, Minneapolis-St. Paul International Airport"
+  },
+  {
+   "icao": "KMSY",
+   "cli": "MSY",
+   "city": "New Orleans",
+   "timezone": "America/Chicago",
+   "latitude": 29.9928,
+   "longitude": -90.2508,
+   "name": "New Orleans, New Orleans International Airport"
+  },
+  {
+   "icao": "KNYC",
+   "cli": "NYC",
+   "city": "New York City",
+   "timezone": "America/New_York",
+   "latitude": 40.7833,
+   "longitude": -73.9667,
+   "name": "New York City, Central Park"
+  },
+  {
+   "icao": "KOKC",
+   "cli": "OKC",
+   "city": "Oklahoma City",
+   "timezone": "America/Chicago",
+   "latitude": 35.3886,
+   "longitude": -97.6003,
+   "name": "Oklahoma City, Will Rogers World Airport"
+  },
+  {
+   "icao": "KORD",
+   "cli": "ORD",
+   "city": "Chicago (O'Hare)",
+   "timezone": "America/Chicago",
+   "latitude": 41.9797,
+   "longitude": -87.9044,
+   "name": "Chicago, Chicago-O'Hare International Airport"
+  },
+  {
+   "icao": "KPHL",
+   "cli": "PHL",
+   "city": "Philadelphia",
+   "timezone": "America/New_York",
+   "latitude": 39.8733,
+   "longitude": -75.2268,
+   "name": "Philadelphia, Philadelphia International Airport"
+  },
+  {
+   "icao": "KPHX",
+   "cli": "PHX",
+   "city": "Phoenix",
+   "timezone": "America/Phoenix",
+   "latitude": 33.4278,
+   "longitude": -112.0035,
+   "name": "Phoenix, Phoenix Sky Harbor International Airport"
+  },
+  {
+   "icao": "KPIT",
+   "cli": "PIT",
+   "city": "Pittsburgh",
+   "timezone": "America/New_York",
+   "latitude": 40.4846,
+   "longitude": -80.2145,
+   "name": "Pittsburgh International Airport"
+  },
+  {
+   "icao": "KPVD",
+   "cli": "PVD",
+   "city": "Providence",
+   "timezone": "America/New_York",
+   "latitude": 41.7223,
+   "longitude": -71.4277,
+   "name": "Rhode Island TF Green International Airport"
+  },
+  {
+   "icao": "KSAN",
+   "cli": "SAN",
+   "city": "San Diego",
+   "timezone": "America/Los_Angeles",
+   "latitude": 32.7336,
+   "longitude": -117.1831,
+   "name": "San Diego International Airport"
+  },
+  {
+   "icao": "KSAT",
+   "cli": "SAT",
+   "city": "San Antonio",
+   "timezone": "America/Chicago",
+   "latitude": 29.5328,
+   "longitude": -98.4636,
+   "name": "San Antonio, San Antonio International Airport"
+  },
+  {
+   "icao": "KSDF",
+   "cli": "SDF",
+   "city": "Louisville",
+   "timezone": "America/Kentucky/Louisville",
+   "latitude": 38.1741,
+   "longitude": -85.7365,
+   "name": "Louisville Muhammad Ali International Airport"
+  },
+  {
+   "icao": "KSEA",
+   "cli": "SEA",
+   "city": "Seattle",
+   "timezone": "America/Los_Angeles",
+   "latitude": 47.4447,
+   "longitude": -122.3136,
+   "name": "Seattle, Seattle-Tacoma International Airport"
+  },
+  {
+   "icao": "KSFO",
+   "cli": "SFO",
+   "city": "San Francisco",
+   "timezone": "America/Los_Angeles",
+   "latitude": 37.6196,
+   "longitude": -122.3656,
+   "name": "San Francisco, San Francisco International Airport"
+  },
+  {
+   "icao": "KSJC",
+   "cli": "SJC",
+   "city": "San Jose",
+   "timezone": "America/Los_Angeles",
+   "latitude": 37.3592,
+   "longitude": -121.9242,
+   "name": "San Jose, San Jose International Airport"
+  },
+  {
+   "icao": "KSPG",
+   "cli": "SPG",
+   "city": "St. Petersburg",
+   "timezone": "America/New_York",
+   "latitude": 27.7685,
+   "longitude": -82.6256,
+   "name": "Albert Whitted Airport"
+  },
+  {
+   "icao": "KTPA",
+   "cli": "TPA",
+   "city": "Tampa",
+   "timezone": "America/New_York",
+   "latitude": 27.9614,
+   "longitude": -82.5403,
+   "name": "Tampa, Tampa International Airport"
+  },
+  {
+   "icao": "KTTN",
+   "cli": "TTN",
+   "city": "Trenton",
+   "timezone": "America/New_York",
+   "latitude": 40.2764,
+   "longitude": -74.8164,
+   "name": "Trenton-Mercer Airport"
+  }
+ ],
+ "series": [
+  {
+   "ticker_prefix": "KXHIGHTATL",
+   "kind": "high",
+   "label": "Atlanta daily high",
+   "station": "KATL",
+   "climate_report": "ATL",
+   "latitude": 33.6403,
+   "longitude": -84.4269,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTATL",
+   "kind": "low",
+   "label": "Atlanta daily low",
+   "station": "KATL",
+   "climate_report": "ATL",
+   "latitude": 33.6403,
+   "longitude": -84.4269,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHAUS",
+   "kind": "high",
+   "label": "Austin daily high",
+   "station": "KAUS",
+   "climate_report": "AUS",
+   "latitude": 30.183,
+   "longitude": -97.6799,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTAUS",
+   "kind": "low",
+   "label": "Austin daily low",
+   "station": "KAUS",
+   "climate_report": "AUS",
+   "latitude": 30.183,
+   "longitude": -97.6799,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTBOS",
+   "kind": "high",
+   "label": "Boston daily high",
+   "station": "KBOS",
+   "climate_report": "BOS",
+   "latitude": 42.3606,
+   "longitude": -71.0106,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTBOS",
+   "kind": "low",
+   "label": "Boston daily low",
+   "station": "KBOS",
+   "climate_report": "BOS",
+   "latitude": 42.3606,
+   "longitude": -71.0106,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTDC",
+   "kind": "high",
+   "label": "Washington, DC daily high",
+   "station": "KDCA",
+   "climate_report": "DCA",
+   "latitude": 38.8483,
+   "longitude": -77.0342,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTDC",
+   "kind": "low",
+   "label": "Washington, DC daily low",
+   "station": "KDCA",
+   "climate_report": "DCA",
+   "latitude": 38.8483,
+   "longitude": -77.0342,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHDEN",
+   "kind": "high",
+   "label": "Denver daily high",
+   "station": "KDEN",
+   "climate_report": "DEN",
+   "latitude": 39.8466,
+   "longitude": -104.6562,
+   "timezone": "America/Denver",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTDEN",
+   "kind": "low",
+   "label": "Denver daily low",
+   "station": "KDEN",
+   "climate_report": "DEN",
+   "latitude": 39.8466,
+   "longitude": -104.6562,
+   "timezone": "America/Denver",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTDAL",
+   "kind": "high",
+   "label": "Dallas daily high",
+   "station": "KDFW",
+   "climate_report": "DFW",
+   "latitude": 32.8974,
+   "longitude": -97.022,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTDAL",
+   "kind": "low",
+   "label": "Dallas daily low",
+   "station": "KDFW",
+   "climate_report": "DFW",
+   "latitude": 32.8974,
+   "longitude": -97.022,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTEWR",
+   "kind": "high",
+   "label": "Newark daily high",
+   "station": "KEWR",
+   "climate_report": "EWR",
+   "latitude": 40.6825,
+   "longitude": -74.1694,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTEWR",
+   "kind": "low",
+   "label": "Newark daily low",
+   "station": "KEWR",
+   "climate_report": "EWR",
+   "latitude": 40.6825,
+   "longitude": -74.1694,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTHOU",
+   "kind": "high",
+   "label": "Houston (Hobby) daily high",
+   "station": "KHOU",
+   "climate_report": "HOU",
+   "latitude": 29.6375,
+   "longitude": -95.2825,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTHOU",
+   "kind": "low",
+   "label": "Houston (Hobby) daily low",
+   "station": "KHOU",
+   "climate_report": "HOU",
+   "latitude": 29.6375,
+   "longitude": -95.2825,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTLV",
+   "kind": "high",
+   "label": "Las Vegas daily high",
+   "station": "KLAS",
+   "climate_report": "LAS",
+   "latitude": 36.0719,
+   "longitude": -115.1634,
+   "timezone": "America/Los_Angeles",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTLV",
+   "kind": "low",
+   "label": "Las Vegas daily low",
+   "station": "KLAS",
+   "climate_report": "LAS",
+   "latitude": 36.0719,
+   "longitude": -115.1634,
+   "timezone": "America/Los_Angeles",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHLAX",
+   "kind": "high",
+   "label": "Los Angeles daily high",
+   "station": "KLAX",
+   "climate_report": "LAX",
+   "latitude": 33.9381,
+   "longitude": -118.3889,
+   "timezone": "America/Los_Angeles",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTLAX",
+   "kind": "low",
+   "label": "Los Angeles daily low",
+   "station": "KLAX",
+   "climate_report": "LAX",
+   "latitude": 33.9381,
+   "longitude": -118.3889,
+   "timezone": "America/Los_Angeles",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHCHI",
+   "kind": "high",
+   "label": "Chicago (Midway) daily high",
+   "station": "KMDW",
+   "climate_report": "MDW",
+   "latitude": 41.7842,
+   "longitude": -87.7553,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTCHI",
+   "kind": "low",
+   "label": "Chicago (Midway) daily low",
+   "station": "KMDW",
+   "climate_report": "MDW",
+   "latitude": 41.7842,
+   "longitude": -87.7553,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHMIA",
+   "kind": "high",
+   "label": "Miami daily high",
+   "station": "KMIA",
+   "climate_report": "MIA",
+   "latitude": 25.7906,
+   "longitude": -80.3164,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTMIA",
+   "kind": "low",
+   "label": "Miami daily low",
+   "station": "KMIA",
+   "climate_report": "MIA",
+   "latitude": 25.7906,
+   "longitude": -80.3164,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTMIN",
+   "kind": "high",
+   "label": "Minneapolis daily high",
+   "station": "KMSP",
+   "climate_report": "MSP",
+   "latitude": 44.8831,
+   "longitude": -93.2289,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTMIN",
+   "kind": "low",
+   "label": "Minneapolis daily low",
+   "station": "KMSP",
+   "climate_report": "MSP",
+   "latitude": 44.8831,
+   "longitude": -93.2289,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTNOLA",
+   "kind": "high",
+   "label": "New Orleans daily high",
+   "station": "KMSY",
+   "climate_report": "MSY",
+   "latitude": 29.9928,
+   "longitude": -90.2508,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTNOLA",
+   "kind": "low",
+   "label": "New Orleans daily low",
+   "station": "KMSY",
+   "climate_report": "MSY",
+   "latitude": 29.9928,
+   "longitude": -90.2508,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHNY",
+   "kind": "high",
+   "label": "New York City daily high",
+   "station": "KNYC",
+   "climate_report": "NYC",
+   "latitude": 40.7833,
+   "longitude": -73.9667,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTNYC",
+   "kind": "low",
+   "label": "New York City daily low",
+   "station": "KNYC",
+   "climate_report": "NYC",
+   "latitude": 40.7833,
+   "longitude": -73.9667,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTOKC",
+   "kind": "high",
+   "label": "Oklahoma City daily high",
+   "station": "KOKC",
+   "climate_report": "OKC",
+   "latitude": 35.3886,
+   "longitude": -97.6003,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTOKC",
+   "kind": "low",
+   "label": "Oklahoma City daily low",
+   "station": "KOKC",
+   "climate_report": "OKC",
+   "latitude": 35.3886,
+   "longitude": -97.6003,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHPHIL",
+   "kind": "high",
+   "label": "Philadelphia daily high",
+   "station": "KPHL",
+   "climate_report": "PHL",
+   "latitude": 39.8733,
+   "longitude": -75.2268,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTPHIL",
+   "kind": "low",
+   "label": "Philadelphia daily low",
+   "station": "KPHL",
+   "climate_report": "PHL",
+   "latitude": 39.8733,
+   "longitude": -75.2268,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTPHX",
+   "kind": "high",
+   "label": "Phoenix daily high",
+   "station": "KPHX",
+   "climate_report": "PHX",
+   "latitude": 33.4278,
+   "longitude": -112.0035,
+   "timezone": "America/Phoenix",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTPHX",
+   "kind": "low",
+   "label": "Phoenix daily low",
+   "station": "KPHX",
+   "climate_report": "PHX",
+   "latitude": 33.4278,
+   "longitude": -112.0035,
+   "timezone": "America/Phoenix",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTSAN",
+   "kind": "high",
+   "label": "San Diego daily high",
+   "station": "KSAN",
+   "climate_report": "SAN",
+   "latitude": 32.7336,
+   "longitude": -117.1831,
+   "timezone": "America/Los_Angeles",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTSAN",
+   "kind": "low",
+   "label": "San Diego daily low",
+   "station": "KSAN",
+   "climate_report": "SAN",
+   "latitude": 32.7336,
+   "longitude": -117.1831,
+   "timezone": "America/Los_Angeles",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTSATX",
+   "kind": "high",
+   "label": "San Antonio daily high",
+   "station": "KSAT",
+   "climate_report": "SAT",
+   "latitude": 29.5328,
+   "longitude": -98.4636,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTSATX",
+   "kind": "low",
+   "label": "San Antonio daily low",
+   "station": "KSAT",
+   "climate_report": "SAT",
+   "latitude": 29.5328,
+   "longitude": -98.4636,
+   "timezone": "America/Chicago",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTSDF",
+   "kind": "high",
+   "label": "Louisville daily high",
+   "station": "KSDF",
+   "climate_report": "SDF",
+   "latitude": 38.1741,
+   "longitude": -85.7365,
+   "timezone": "America/Kentucky/Louisville",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTSDF",
+   "kind": "low",
+   "label": "Louisville daily low",
+   "station": "KSDF",
+   "climate_report": "SDF",
+   "latitude": 38.1741,
+   "longitude": -85.7365,
+   "timezone": "America/Kentucky/Louisville",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTSEA",
+   "kind": "high",
+   "label": "Seattle daily high",
+   "station": "KSEA",
+   "climate_report": "SEA",
+   "latitude": 47.4447,
+   "longitude": -122.3136,
+   "timezone": "America/Los_Angeles",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTSEA",
+   "kind": "low",
+   "label": "Seattle daily low",
+   "station": "KSEA",
+   "climate_report": "SEA",
+   "latitude": 47.4447,
+   "longitude": -122.3136,
+   "timezone": "America/Los_Angeles",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTSFO",
+   "kind": "high",
+   "label": "San Francisco daily high",
+   "station": "KSFO",
+   "climate_report": "SFO",
+   "latitude": 37.6196,
+   "longitude": -122.3656,
+   "timezone": "America/Los_Angeles",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTSFO",
+   "kind": "low",
+   "label": "San Francisco daily low",
+   "station": "KSFO",
+   "climate_report": "SFO",
+   "latitude": 37.6196,
+   "longitude": -122.3656,
+   "timezone": "America/Los_Angeles",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXHIGHTTTN",
+   "kind": "high",
+   "label": "Trenton daily high",
+   "station": "KTTN",
+   "climate_report": "TTN",
+   "latitude": 40.2764,
+   "longitude": -74.8164,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  },
+  {
+   "ticker_prefix": "KXLOWTTTN",
+   "kind": "low",
+   "label": "Trenton daily low",
+   "station": "KTTN",
+   "climate_report": "TTN",
+   "latitude": 40.2764,
+   "longitude": -74.8164,
+   "timezone": "America/New_York",
+   "last_market_close": "2026-09-30"
+  }
+ ]
+}

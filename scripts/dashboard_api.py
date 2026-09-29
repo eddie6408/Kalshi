@@ -255,43 +255,85 @@ def trades(conn) -> dict:
 
 
 def weather(conn, cfg: dict) -> dict:
-    series_cfg = (cfg.get("weather") or {}).get("series") or []
+    """One entry per station (high and low side by side), from a handful of
+    grouped queries - 48 series one query at a time was ~340 per refresh."""
+    from kalshibot.weather_stations import load_series
+    series_cfg = load_series(cfg.get("weather") or {})
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    cities = []
-    for s in series_cfg:
-        prefix, station = s.get("ticker_prefix"), s.get("station")
-        fc = rows(conn, "SELECT ts, target_date, predicted_mean_f mean, predicted_sigma_f sigma, "
-                        "lead_hours, source, actual_f FROM forecasts WHERE series=? "
-                        "ORDER BY id DESC LIMIT 1", prefix)
-        obs = first(conn, "SELECT value, data_time, retrieved_at, target_date FROM "
-                          "source_observations WHERE source_id='nws_observations' AND "
-                          "subject=? ORDER BY id DESC LIMIT 1", station)
-        official = first(conn, "SELECT value, target_date FROM source_observations WHERE "
-                               "source_id='nws_climate_report' AND subject=? "
-                               "ORDER BY id DESC LIMIT 1", "CLI" + str(s.get("climate_report") or ""))
-        settle = first(conn, "SELECT value, target_date FROM source_observations WHERE "
-                             "source_id='twc_settlement' AND subject=? ORDER BY id DESC LIMIT 1",
-                       str(station or "").upper())
-        scanned = first(conn, "SELECT COUNT(DISTINCT markets) n, "
-                              "SUM(decision='ACCEPTED') acc FROM opportunity_ledger "
-                              "WHERE markets LIKE ? AND detected_at >= ?", prefix + "-%", since)
-        reasons = rows(conn, "SELECT COALESCE(rejection_reason,'') reason, COUNT(*) n "
-                             "FROM opportunity_ledger WHERE markets LIKE ? AND detected_at >= ? "
-                             "AND decision='REJECTED' GROUP BY reason ORDER BY n DESC LIMIT 3",
-                       prefix + "-%", since)
-        latest = first(conn, "SELECT model, our_probability p, lead_hours FROM probability_log "
-                             "WHERE series=? ORDER BY id DESC LIMIT 1", prefix)
-        cities.append({
-            "series": prefix, "label": s.get("label") or prefix, "station": station,
-            "kind": s.get("kind"), "timezone": s.get("timezone"),
-            "forecast": fc[0] if fc else None, "observed": obs, "official": official,
-            "settlement": settle,
-            "scanned_24h": (scanned or {}).get("n") or 0,
-            "accepted_24h": (scanned or {}).get("acc") or 0,
-            "top_reasons": reasons, "model": (latest or {}).get("model"),
-        })
-    return {"cities": cities, "today": today}
+    fc = {r["series"]: r for r in rows(conn, """
+        SELECT f.series, f.ts, f.target_date, f.predicted_mean_f mean, f.predicted_sigma_f sigma,
+               f.lead_hours, f.source, f.actual_f FROM forecasts f
+        JOIN (SELECT series, MAX(id) id FROM forecasts GROUP BY series) m ON m.id = f.id""")}
+    latest = {r["series"]: r for r in rows(conn, """
+        SELECT p.series, p.model, p.lead_hours FROM probability_log p
+        JOIN (SELECT series, MAX(id) id FROM probability_log
+              WHERE ts >= ? GROUP BY series) m ON m.id = p.id""", since)}
+    scan = {r["pfx"]: r for r in rows(conn, """
+        SELECT substr(markets, 1, instr(markets, '-') - 1) pfx, COUNT(DISTINCT markets) n,
+               SUM(decision='ACCEPTED') acc FROM opportunity_ledger
+        WHERE detected_at >= ? AND markets LIKE 'KX%' GROUP BY pfx""", since)}
+    reasons: dict[str, list] = {}
+    for r in rows(conn, """
+        SELECT substr(markets, 1, instr(markets, '-') - 1) pfx,
+               COALESCE(rejection_reason, '') reason, COUNT(*) n FROM opportunity_ledger
+        WHERE detected_at >= ? AND decision='REJECTED' AND markets LIKE 'KX%'
+        GROUP BY pfx, reason ORDER BY n DESC""", since):
+        if len(reasons.setdefault(r["pfx"], [])) < 3:
+            reasons[r["pfx"]].append({"reason": r["reason"], "n": r["n"]})
+
+    def latest_obs(source_id, data_type):
+        return {r["subject"]: r for r in rows(conn, """
+            SELECT o.subject, o.value, o.target_date, o.data_time FROM source_observations o
+            JOIN (SELECT subject, MAX(id) id FROM source_observations
+                  WHERE source_id=? AND data_type=? GROUP BY subject) m ON m.id = o.id""",
+            source_id, data_type)}
+    obs = latest_obs("nws_observations", "observed_high_so_far_f")
+    cli = {"high": latest_obs("nws_climate_report", "official_daily_max_f"),
+           "low": latest_obs("nws_climate_report", "official_daily_min_f")}
+    twc = {"high": latest_obs("twc_settlement", "settlement_daily_max_f"),
+           "low": latest_obs("twc_settlement", "settlement_daily_min_f")}
+
+    stations: dict[str, dict] = {}
+    for sc in series_cfg:
+        st = str(sc.get("station") or "").upper()
+        kind = sc.get("kind", "high")
+        prefix = sc.get("ticker_prefix")
+        e = stations.setdefault(st, {"station": st,
+                                     "label": str(sc.get("label") or st).replace(" daily high", "")
+                                     .replace(" daily low", ""),
+                                     "timezone": sc.get("timezone"),
+                                     "observed": obs.get(st), "kinds": {}})
+        sn = scan.get(prefix) or {}
+        e["kinds"][kind] = {
+            "series": prefix, "forecast": fc.get(prefix),
+            "official": cli[kind].get("CLI" + str(sc.get("climate_report") or "")),
+            "settlement": twc[kind].get(st),
+            "scanned_24h": sn.get("n") or 0, "accepted_24h": sn.get("acc") or 0,
+            "top_reasons": reasons.get(prefix, []), "model": (latest.get(prefix) or {}).get("model")}
+    out = sorted(stations.values(), key=lambda e: -sum(k["scanned_24h"] for k in e["kinds"].values()))
+    return {"stations": out, "today": today,
+            "blend": _blend_summary()}
+
+
+def _blend_summary() -> dict | None:
+    try:
+        raw = json.loads((ROOT / "data" / "weather_blend.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    oos = (raw.get("report") or {}).get("out_of_sample") or {}
+    out = {"fitted_at": raw.get("fitted_at"), "window": raw.get("window"), "kinds": {}}
+    for kind, k in oos.items():
+        if not isinstance(k, dict):
+            continue
+        models = {m: v.get("rmse_raw") for m, v in k.items()
+                  if isinstance(v, dict) and "rmse_raw" in v}
+        out["kinds"][kind] = {"n": k.get("n"), "blend_rmse": (k.get("blend") or {}).get("rmse"),
+                              "within_1f": (k.get("blend") or {}).get("within_1f"),
+                              "equal_rmse": (k.get("equal_average") or {}).get("rmse"),
+                              "models": models,
+                              "weights": ((raw.get("params") or {}).get("weights") or {}).get(kind)}
+    return out
 
 
 def decisions(conn) -> dict:

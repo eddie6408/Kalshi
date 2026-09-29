@@ -40,6 +40,7 @@ from kalshibot.paper_live import PaperConfig, PaperLiveAccount, ProdArbCheck
 from kalshibot.prodwatch import ProductionWatch, WatchConfig
 from kalshibot.recorder import Recorder, RecorderConfig
 from kalshibot.versioning import versions
+from kalshibot.weather_stations import load_series, load_stations
 from kalshibot.sources import (MONITOR, OFF, DOWN, HEALTHY, SourceConfigError,
                                configure_from_settings, nws_user_agent)
 from kalshibot.alerts import ALERTS, today_key
@@ -62,7 +63,7 @@ def check_settlement_sources(settings, market, journal) -> None:
     Never blocks startup: a failed lookup is logged and the bot carries on.
     """
     registered = {s.publisher for s in MONITOR.registry if "settlement" in s.roles}
-    for cfg in settings.get("weather.series") or []:
+    for cfg in load_series(settings.section("weather")):
         series = cfg.get("ticker_prefix")
         if not series:
             continue
@@ -774,16 +775,18 @@ def main() -> int:
     # days. On a clock it cannot be forgotten.
     if has_forecasts:
         tz_by_series = {x["ticker_prefix"]: x.get("timezone", "America/New_York")
-                        for x in (settings.get("weather.series") or [])}
+                        for x in (load_series(settings.section("weather")))}
 
+        kind_by_series = {x["ticker_prefix"]: x.get("kind", "high")
+                          for x in load_series(settings.section("weather"))}
         cli_by_station = {x["station"]: x["climate_report"]
-                          for x in (settings.get("weather.series") or [])
+                          for x in (load_series(settings.section("weather")))
                           if x.get("station") and x.get("climate_report")}
 
         from kalshibot.settlement_check import (TWCSettlement, check_inflation,
                                                 stations_from_config)
         twc = TWCSettlement(user_agent=nws_user_agent(settings.section("sources")))
-        twc_stations = stations_from_config(settings.get("weather.series") or [])
+        twc_stations = load_stations(settings.section("weather"))
         infl = next((s for s in engine.forecasts if s.name == "inflation_nowcast"), None)
 
         def scoring_pass():
@@ -795,7 +798,7 @@ def main() -> int:
             with journal.lock:
                 updated, looked_up = score_pending(
                     journal.conn, wd._session, tz_by_series,
-                    cli_by_station=cli_by_station)
+                    cli_by_station=cli_by_station, kind_by_series=kind_by_series)
             # Package 2: how did every opportunity past its settlement turn out?
             try:
                 from kalshibot.ledger import resolve_outcomes

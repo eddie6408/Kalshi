@@ -162,6 +162,26 @@ strategy:
   name: weather_temperature
 
 weather:
+  # Every station Kalshi settles weather on (39) and every daily high/low
+  # series it lists (48, at 24 stations) - built from Kalshi's own contract
+  # rules, The Weather Company's station list and the NWS station records by
+  # scripts/build_weather_stations.py (2026-09-29). The entries below win on
+  # a clash and keep their history notes.
+  stations_file: config/weather_stations.json
+  # Multi-model blend (kalshibot/weather_blend.py; fitted by
+  # scripts/fit_weather_blend.py against The Weather Company's official
+  # values, 39 stations x 90 days). Out of sample (last 25 days): daily high
+  # RMSE 1.28F vs best single model (HRRR) 1.59F, NBM 2.77F; daily low 1.49F
+  # vs 1.81F. It re-centres the ensemble; spread, nowcast and cross-checks
+  # are unchanged.
+  blend:
+    enabled: true
+    params_path: data/weather_blend.json
+    # The ensemble mean's share of the centre. Not fittable from the archive
+    # (no ensemble history); refit from the live forecasts table later.
+    ensemble_weight: 0.25
+    # Models this far apart (max - min, F): confidence x0.75.
+    disagreement_cut_f: 6.0
   # Kalshi daily high/low temperature series. Ticker prefixes are verified
   # at runtime against /markets, so a wrong guess here is harmless -
   # it just finds nothing.
@@ -396,6 +416,10 @@ forecast:
   # Per-estimator overrides of the rules below. Six hours of lead time is
   # right for a daily temperature and wrong for a monthly CPI print.
   per_estimator:
+    weather_temperature:
+      # 48 series now: read production books only for markets within 12 h
+      # of their close (the 6 h trading window plus the benchmark).
+      watch_max_lead_hours: 12
     inflation_nowcast:
       # Trade only inside three weeks of the release, where the Cleveland
       # nowcast exists and its measured error is smallest. Further months are
@@ -709,6 +733,9 @@ market_skill:
   # that runs now. Checked before deploying: 0-6h moves BEHIND -> EVEN, so
   # weather entries stay blocked (require: ahead).
   model_since:
+    # ensemble@2 (29 Sep): re-centred on the multi-model blend - a different
+    # forecaster from the ensemble alone, so its record starts at deployment.
+    ensemble: "2026-09-29T08:32:00"
     nowcast: "2026-09-29T05:16:00"
   min_contracts: 15
   # "Significantly" = more than `margin` Brier points, at `z` standard errors
@@ -762,7 +789,7 @@ feed:
   # production.
   url: "wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2"
   # How many markets to follow. The working set is a few hundred, not 80,000.
-  max_subscriptions: 500
+  max_subscriptions: 1000
   # Send our own ping if the socket has been quiet this long, so it is not
   # dropped for being idle.
   ping_seconds: 20
@@ -798,9 +825,9 @@ recorder:
 # decides on demo prices) and the maker shadow below.
 production_watch:
   enabled: true
-  book_interval_seconds: 120
+  book_interval_seconds: 180
   trades_interval_seconds: 300
-  max_requests_per_second: 2   # the live-volatility bot uses up to 6 on the same IP
+  max_requests_per_second: 3   # the live-volatility bot uses up to 6 on the same IP
   forget_after_minutes: 30
 
 # Package C2, phase M0 (approved 2026-09-28): SIMULATED resting orders for the
@@ -890,6 +917,11 @@ workers:
   inflation_nowcast:
     enabled: true
     interval_seconds: 600
+
+  # 48 weather series (24 stations, high and low) per pass.
+  weather_temperature:
+    enabled: true
+    interval_seconds: 180
 
   # Scoring: what did the temperature actually DO?
   #
@@ -1094,6 +1126,13 @@ sources:
       roles: [settlement]
       endpoint: "https://weather.com/kalshi/api/climate/primary?date={date}"
       notes: "Kalshi's named settlement source (rules: 'maximum temperature at <station> (CLINYC) according to The Weather Company'). Its climate portal serves the official daily reports as keyless JSON for all 39 Kalshi stations; read every scoring pass (kalshibot/settlement_check.py) and compared with the NWS climate report. 25-27 Sep: identical."
+
+    open_meteo_models:
+      publisher: "Open-Meteo, redistributing NOAA NBM, GFS, HRRR, ECMWF IFS / AIFS, CMC GEM, DWD ICON"
+      tier: 2
+      roles: [primary]
+      endpoint: "https://api.open-meteo.com/v1/forecast?models=ncep_nbm_conus,gfs_global,ecmwf_ifs025,ecmwf_aifs025_single,ncep_hrrr_conus,gem_seamless,icon_seamless"
+      notes: "Daily high/low per model for the multi-model blend. NOAA AIGEFS and GraphCast are not served (checked 2026-09-29)."
 
     # ---- inflation (2026-09-29) ----------------------------------------
     cleveland_fed_nowcast:

@@ -359,6 +359,8 @@ td.r, th.r { text-align: right; }
       <section class="page" id="page-weather">
         <div class="page-head"><div><h2>Weather activity</h2>
           <p>Station guidance per city, what the bot scanned in the last 24 hours and why most of it was rejected, and whether the model beats the market.</p></div></div>
+        <div class="card"><h3>Multi-model blend</h3><p class="desc">NOAA NBM, GFS, ECMWF IFS and AIFS, HRRR, GEM and ICON, bias-corrected per station and weighted by measured error; the ensemble is re-centred on the blend. Scored against what Kalshi settles on.</p><div class="tbl" id="tbl-blend"></div></div>
+        <div class="spacer"></div>
         <div class="grid g-3" id="cities"></div>
         <div class="spacer"></div>
         <div class="grid g-2">
@@ -914,21 +916,37 @@ function renderInflation() {
 
 function renderWeather() {
   const w = SNAP.weather || {}, core = SNAP.core || {};
-  $("#cities").innerHTML = errBox("weather") + (w.cities || []).map(c => {
-    const fc = c.forecast || {}, ob = c.observed || {}, off = c.official || {};
-    const reasons = (c.top_reasons || []).map(r => `<div class="row"><span>${esc(r.reason || "—")}</span><b>${r.n}</b></div>`).join("") || `<div class="row"><span class="hint">No rejections recorded</span></div>`;
+  const kindRow = (k, name) => {
+    if (!k) return "";
+    const fc = k.forecast || {}, off = k.official || {}, tw = k.settlement || {};
+    const reasons = (k.top_reasons || []).slice(0, 2).map(r => esc(r.reason || "—") + " " + r.n).join(" · ") || "no rejections";
+    return `<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px">
+      <div class="flex" style="justify-content:space-between"><b>${name}</b><span class="flex">${k.model ? chip(k.model, k.model === "nowcast" ? "accent" : "info") : ""}<span class="hint mono">${esc(k.series)}</span></span></div>
+      <div class="flex" style="align-items:baseline;margin:4px 0"><div class="num" style="font:700 20px Inter">${n(fc.mean) === null ? "—" : (+fc.mean).toFixed(1) + "°"}</div><div class="hint">± ${n(fc.sigma) === null ? "—" : (+fc.sigma).toFixed(1)}°F · ${esc(fc.target_date || "")}</div></div>
+      <div class="row"><span>Official (NWS / Weather Co.)</span><b>${n(off.value) === null ? "—" : off.value + "°"} / ${n(tw.value) === null ? "—" : tw.value + "°"} <span class="hint">${esc(tw.target_date || off.target_date || "")}</span></b></div>
+      <div class="row"><span>Scanned 24h</span><b>${k.scanned_24h} <span class="hint">${k.accepted_24h} accepted</span></b></div>
+      <div class="sub2">${reasons}</div></div>`;
+  };
+  const sts = w.stations || [];
+  $("#cities").innerHTML = errBox("weather") + sts.map(c => {
+    const ob = c.observed || {};
     return `<div class="card city">
-      <div class="card-head"><div><h3>${esc(c.label)}</h3><div class="sub2 mono">${esc(c.series)} · ${esc(c.station)}</div></div>
-        <div class="right">${c.model ? chip(c.model, c.model === "nowcast" ? "accent" : "info") : ""}</div></div>
-      <div class="flex" style="margin:10px 0 6px;align-items:baseline"><div class="big num">${n(fc.mean) === null ? "—" : (+fc.mean).toFixed(1) + "°"}</div><div class="hint">± ${n(fc.sigma) === null ? "—" : (+fc.sigma).toFixed(1)}°F · forecast high ${esc(fc.target_date || "")}</div></div>
-      <div class="row"><span>Observed so far</span><b>${n(ob.value) === null ? "—" : (+ob.value).toFixed(1) + "°F"}</b></div>
-      <div class="row"><span>Last official (NWS CLI)</span><b>${n(off.value) === null ? "—" : off.value + "°F"} <span class="hint">${esc(off.target_date || "")}</span></b></div>
-      <div class="row"><span>Settles on (Weather Co.)</span><b>${n((c.settlement || {}).value) === null ? "—" : c.settlement.value + "°F"} <span class="hint">${esc((c.settlement || {}).target_date || "")}</span></b></div>
-      <div class="row"><span>Lead / source</span><b>${n(fc.lead_hours) === null ? "—" : (+fc.lead_hours).toFixed(1) + "h"} · ${esc((fc.source || "").replace("open-meteo-", ""))}</b></div>
-      <div class="row"><span>Markets scanned · 24h</span><b>${c.scanned_24h} <span class="hint">${c.accepted_24h} accepted</span></b></div>
-      <div style="border-top:1px solid var(--border);margin:8px 0 4px"></div>
-      <div class="hint" style="margin-bottom:2px">Top rejection reasons</div>${reasons}</div>`;
+      <div class="card-head"><div><h3>${esc(c.label)}</h3><div class="sub2 mono">${esc(c.station)} · ${esc((c.timezone || "").split("/").pop().replace("_", " "))}</div></div>
+        <div class="right"><span class="hint">now ${n(ob.value) === null ? "—" : (+ob.value).toFixed(0) + "°F"}</span></div></div>
+      ${kindRow(c.kinds.high, "Daily high")}${kindRow(c.kinds.low, "Daily low")}</div>`;
   }).join("");
+  const bl = w.blend || {};
+  const L = { ncep_nbm_conus: "NBM", gfs_global: "GFS", ecmwf_ifs025: "ECMWF IFS", ecmwf_aifs025_single: "ECMWF AIFS", ncep_hrrr_conus: "HRRR", gem_seamless: "GEM", icon_seamless: "ICON" };
+  const hi = (bl.kinds || {}).high || {}, lo = (bl.kinds || {}).low || {};
+  const mrows = Object.keys(L).map(m => ({ m, hr: (hi.models || {})[m], lr: (lo.models || {})[m], hw: (hi.weights || {})[m], lw: (lo.weights || {})[m] }));
+  mrows.push({ m: "equal", hr: hi.equal_rmse, lr: lo.equal_rmse }, { m: "blend", hr: hi.blend_rmse, lr: lo.blend_rmse, hw: 1, lw: 1 });
+  $("#tbl-blend").innerHTML = !bl.kinds ? empty("Blend not fitted yet - scripts/fit_weather_blend.py.") : table([
+    { h: "Model", f: r => r.m === "blend" ? "<b>Fitted blend</b>" : r.m === "equal" ? "Equal average" : esc(L[r.m]) },
+    { h: "High RMSE", r: 1, f: r => `<span class="num ${r.m === "blend" ? "up" : ""}">${n(r.hr) === null ? "—" : (+r.hr).toFixed(2) + "°"}</span>` },
+    { h: "Weight", r: 1, f: r => r.m === "blend" || r.m === "equal" ? "" : `<span class="num sub2">${n(r.hw) === null ? "—" : pct(r.hw, 0)}</span>` },
+    { h: "Low RMSE", r: 1, f: r => `<span class="num ${r.m === "blend" ? "up" : ""}">${n(r.lr) === null ? "—" : (+r.lr).toFixed(2) + "°"}</span>` },
+    { h: "Weight", r: 1, f: r => r.m === "blend" || r.m === "equal" ? "" : `<span class="num sub2">${n(r.lw) === null ? "—" : pct(r.lw, 0)}</span>` },
+  ], mrows) + (bl.kinds ? `<div class="dimnote">Out of sample, last days of ${esc((bl.window || []).join(" .. "))}, against The Weather Company's official values. Within 1°F: highs ${pct(hi.within_1f, 0)}, lows ${pct(lo.within_1f, 0)}.</div>` : "");
   // reliability
   const rel = core.reliability || [];
   scatter($("#ch-rel"), rel.map(b => ({ x: b.forecast, y: b.observed, lo: b.lo, hi: b.hi, color: "var(--s1)", r: Math.max(4, Math.min(11, Math.sqrt(b.n) / 2.4)),

@@ -14,13 +14,18 @@ models have biases the ensemble spread does not capture.
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import logging
 import math
 import re
+import time
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .. import nowcast as _nowcast
+from .. import weather_blend as _wb
+from ..weather_stations import load_series
 from ..models import Market
 from ..weatherdata import DailyTempForecast, WeatherData
 from .base import Estimate
@@ -45,7 +50,7 @@ def _norm_cdf(x: float) -> float:
 
 #: Bump when a model's maths or constants change, so every forecast and
 #: trade names the model that produced it (research brief section 24).
-MODEL_VERSIONS = {"ensemble": "1", "nowcast": "2"}
+MODEL_VERSIONS = {"ensemble": "2", "nowcast": "2"}
 
 #: Worst source tier behind each model's number (1 = the organisation that
 #: publishes it, 2 = an established redistributor - Open-Meteo).
@@ -57,7 +62,20 @@ class WeatherTemperatureEstimator:
 
     def __init__(self, weather_cfg: dict, data: WeatherData | None = None):
         self.cfg = weather_cfg or {}
-        self.series = {s["ticker_prefix"].upper(): s for s in self.cfg.get("series", [])}
+        # config.yaml's series plus config/weather_stations.json: all 39
+        # Kalshi settlement stations, 48 daily high/low series.
+        self.series = {s["ticker_prefix"].upper(): s for s in load_series(self.cfg)}
+        # The multi-model blend (kalshibot/weather_blend.py): re-centres the
+        # ensemble on NBM / GFS / IFS / AIFS / HRRR / GEM / ICON, bias-corrected
+        # per station and weighted by their measured error. Off or unfitted =
+        # the ensemble alone, as before.
+        bcfg = self.cfg.get("blend") or {}
+        self.blend_enabled = bool(bcfg.get("enabled", True))
+        self.blend_alpha = float(bcfg.get("ensemble_weight", 0.25))
+        self.blend_path = bcfg.get("params_path", "data/weather_blend.json")
+        self.blend_spread_cut_f = float(bcfg.get("disagreement_cut_f", 6.0))
+        self._blend_params = None
+        self._blend_at = 0.0
         self.data = data or WeatherData(
             ensemble_models=self.cfg.get("ensemble_models"),
         )
@@ -77,6 +95,35 @@ class WeatherTemperatureEstimator:
         #: the hourly HRRR, corrected against today's readings. Used for
         #: same-day markets within nowcast.max_lead_hours of the end of day.
         self.nowcast_cfg = _nowcast.NowcastConfig.from_dict(self.cfg.get("nowcast"))
+
+    def blend_params(self) -> _wb.BlendParams:
+        now = time.time()
+        if self._blend_params is None or now - self._blend_at > 600:
+            p = Path(self.blend_path)
+            p = p if p.is_absolute() else Path(__file__).resolve().parents[2] / p
+            self._blend_params = _wb.BlendParams.load(p, alpha=self.blend_alpha)
+            self._blend_at = now
+        return self._blend_params
+
+    def _blend(self, cfg: dict, fc: DailyTempForecast, target, tz_name: str):
+        """(forecast re-centred on the blend, Blend) - or (fc, None)."""
+        if not self.blend_enabled or fc.n_members <= 1:
+            return fc, None
+        params = self.blend_params()
+        fetch = getattr(self.data, "model_values", None)
+        if not params.fitted or not callable(fetch):
+            return fc, None
+        try:
+            values = fetch(cfg["latitude"], cfg["longitude"], tz_name, target, fc.kind,
+                           params.models)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("blend models unavailable: %s", exc)
+            return fc, None
+        b = _wb.blend(params, fc.kind, str(cfg.get("station") or "").upper(), values, fc.mean)
+        if b is None:
+            return fc, None
+        shift = b.centre - fc.mean
+        return dataclasses.replace(fc, members=[m + shift for m in fc.members]), b
 
     # ------------------------------------------------------------------
     def candidate_series(self) -> list[str]:
@@ -275,8 +322,13 @@ class WeatherTemperatureEstimator:
         if fc is None:
             return Estimate.skip("no forecast data available", self.name)
 
-        ens_prob = min(0.995, max(0.005, self._probability_in_range(fc, lo, hi)))
-        prob, conf, model = ens_prob, self._confidence(fc, ens_prob), "ensemble"
+        raw_mean = fc.mean
+        fcb, bl = self._blend(cfg, fc, target, tz_name)
+        ens_prob = min(0.995, max(0.005, self._probability_in_range(fcb, lo, hi)))
+        conf0 = self._confidence(fcb, ens_prob)
+        if bl is not None and bl.spread > self.blend_spread_cut_f:
+            conf0 *= 0.75            # the models disagree: trust the centre less
+        prob, conf, model = ens_prob, conf0, "ensemble"
         nc, hm = self._nowcast(cfg, fc, target, tz_name)
         if nc is not None:
             prob = min(0.995, max(0.005, nc.probability_between(lo, hi)))
@@ -307,7 +359,14 @@ class WeatherTemperatureEstimator:
                 # The nowcast does not use the ensemble; a degraded ensemble
                 # only matters when the ensemble is what priced it.
                 "degraded_source": fc.degraded if model == "ensemble" else False,
-                "ensemble_mean_f": round(fc.mean, 2),
+                "ensemble_mean_f": round(raw_mean, 2),
+                # ---- the multi-model blend (weather_blend.py) ----------------
+                "blend_centre_f": round(bl.centre, 2) if bl else None,
+                "blend_shift_f": round(bl.centre - raw_mean, 2) if bl else None,
+                "blend_models_f": ({_wb.LABELS.get(m, m): round(v, 1) for m, v in bl.raw.items()}
+                                   if bl else None),
+                "model_spread_f": round(bl.spread, 2) if bl else None,
+                "blend_version": _wb.BLEND_VERSION if bl else None,
                 "ensemble_spread_f": round(fc.spread, 2),
                 "sigma_used_f": round(self._sigma(fc), 2),
                 "observed_so_far_f": fc.observed_extreme_so_far,
