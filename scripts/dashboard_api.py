@@ -135,6 +135,119 @@ def inflation(conn) -> dict:
             "fit": _fit_summary()}
 
 
+WX_CLASS_GROUP = {"DAILY_HIGH": "daily", "DAILY_LOW": "daily", "DAILY_AVG": "daily",
+                  "HOURLY_TEMP": "hourly", "WEEKLY_MAX": "weekly", "WEEKLY_MIN": "weekly",
+                  "RUN_LENGTH": "weekly", "MONTHLY_MAX": "monthly", "MONTHLY_MIN": "monthly",
+                  "SEASONAL": "seasonal", "CLIMATE_ONE_OFF": "seasonal",
+                  "PRECIPITATION": "other", "OTHER": "other"}
+
+
+def wx_research(cfg: dict) -> dict | None:
+    """The Weather research page (WX-1..7): lifecycle by class, every
+    modelled contract with its latest probability, quote and paper decision,
+    the simulated distributions, data quality, quota, calibration and the
+    eligibility checklist. Read-only on data/weather_research.db."""
+    wx = (cfg or {}).get("wx_research") or {}
+    path = ROOT / wx.get("db_path", "data/weather_research.db")
+    if not path.exists():
+        return {"enabled": bool(wx.get("enabled")), "ready": False}
+    c = open_ro(path)
+    try:
+        life = rows(c, "SELECT cls, status, source, COUNT(*) n FROM wx_contracts "
+                       "WHERE market_status='open' GROUP BY cls, status, source")
+        latest = rows(c, "SELECT r.* FROM wx_model_runs r JOIN (SELECT ticker, MAX(id) mid FROM "
+                         "wx_model_runs GROUP BY ticker) l ON l.mid=r.id")
+        runs = {r["ticker"]: r for r in latest}
+        contracts = rows(c, "SELECT ticker, event_ticker, series, cls, station, location, source, "
+                            "operator, threshold, threshold_hi, run_k, window_start, window_end, "
+                            "at_time, status, status_reason, rules_version, yes_bid, yes_ask, close_time, "
+                            "market_status, result FROM wx_contracts WHERE cls NOT IN "
+                            "('OTHER','DAILY_HIGH','DAILY_LOW') AND (market_status='open' OR ticker IN "
+                            "(SELECT ticker FROM wx_model_runs)) ORDER BY close_time LIMIT 400")
+        paper = {r["ticker"]: r for r in rows(
+            c, "SELECT p.* FROM wx_paper p JOIN (SELECT ticker, MAX(id) mid FROM wx_paper GROUP BY ticker) l "
+               "ON l.mid=p.id")}
+        out_contracts = []
+        for k in contracts:
+            r = runs.get(k["ticker"]) or {}
+            p = paper.get(k["ticker"]) or {}
+            inputs = {}
+            try:
+                inputs = json.loads(r.get("inputs") or "{}")
+            except ValueError:
+                pass
+            out_contracts.append({
+                **k, "group": WX_CLASS_GROUP.get(k["cls"], "other"),
+                "prob": r.get("prob"), "prob_lo": r.get("prob_lo"), "prob_hi": r.get("prob_hi"),
+                "mc_se": r.get("mc_se"), "run_at": r.get("at"), "method": r.get("method"),
+                "model_version": r.get("model_version"), "n_paths": r.get("n_paths"),
+                "q_bid": r.get("market_yes_bid", k.get("yes_bid")),
+                "q_ask": r.get("market_yes_ask", k.get("yes_ask")),
+                "hist": json.loads(r["stat_hist"]) if r.get("stat_hist") else None,
+                "days": [{"day": d.get("day"), "kind": d.get("kind"), "mean": d.get("mean"),
+                          "sd": d.get("sd")} for d in (inputs.get("days") or [])],
+                "paper": {k2: p.get(k2) for k2 in ("decision", "reason", "side", "price", "edge_net",
+                                                   "required_edge", "pnl", "at")} if p else None})
+        today = datetime.now(timezone.utc).date().isoformat()
+        quota = rows(c, "SELECT provider, calls, refused FROM wx_quota WHERE day=?", today)
+        dq = rows(c, "SELECT variable, status, quality, COUNT(*) n FROM wx_observations "
+                     "WHERE obs_date >= date('now','-4 days') GROUP BY variable, status, quality")
+        def one(sql):
+            return (first(c, sql) or {}).get("v")
+        fc = one("SELECT MAX(retrieved_at) v FROM wx_forecasts WHERE source='open_meteo'")
+        fc_n = one("SELECT COUNT(*) v FROM wx_forecasts WHERE source='open_meteo'") or 0
+        hist_n = one("SELECT COUNT(*) v FROM wx_forecasts WHERE source='open_meteo_previous_runs'") or 0
+        clim_n = one("SELECT COUNT(DISTINCT station) v FROM wx_climatology") or 0
+        elig = rows(c, "SELECT e.cls, e.status, e.criteria, e.at FROM wx_eligibility e JOIN "
+                       "(SELECT cls, MAX(id) mid FROM wx_eligibility GROUP BY cls) l ON l.mid=e.id")
+        for e in elig:
+            try:
+                e["criteria"] = json.loads(e["criteria"] or "{}")
+            except ValueError:
+                e["criteria"] = {}
+        alerts = rows(c, "SELECT at, kind, subject, detail FROM wx_alerts ORDER BY id DESC LIMIT 25")
+        shadow = one("SELECT COUNT(*) v FROM wx_daily_shadow") or 0
+        try:
+            from kalshibot.wx.paper import class_report
+
+            class _RO:
+                def query(self, sql, params=()):
+                    return rows(c, sql, *params)
+
+                def one(self, sql, params=()):
+                    r_ = rows(c, sql, *params)
+                    return r_[0] if r_ else None
+            report = class_report(_RO())
+        except Exception as exc:  # noqa: BLE001
+            report = {"error": str(exc)}
+    finally:
+        c.close()
+    calib = None
+    try:
+        raw = json.loads((ROOT / wx.get("calibration_path", "data/wx_calibration.json")).read_text())
+        p, rep = raw.get("params") or {}, raw.get("report") or {}
+        calib = {"fitted_at": p.get("fitted_at"), "rows": rep.get("rows"), "dates": rep.get("dates"),
+                 "split": rep.get("split"),
+                 "rho": {k: v.get("rho") for k, v in (p.get("rho") or {}).items()},
+                 "oos": [{"key": k, **v} for k, v in sorted((rep.get("out_of_sample") or {}).items())]}
+    except (OSError, ValueError):
+        pass
+    status = {}
+    try:
+        status = (json.loads((ROOT / "data" / "control" / "status.json").read_text())
+                  .get("wx_research") or {})
+    except (OSError, ValueError):
+        pass
+    return {"enabled": bool(wx.get("enabled")), "ready": True, "lifecycle": life,
+            "contracts": out_contracts, "quota": quota,
+            "quota_limits": wx.get("quota_per_day") or {}, "data_quality": dq,
+            "forecasts": {"last_snapshot": fc, "rows": fc_n, "history_rows": hist_n,
+                          "climatology_stations": clim_n},
+            "eligibility": elig, "alerts": alerts, "calibration": calib, "report": report,
+            "daily_shadow_rows": shadow, "tasks": status.get("tasks") or {},
+            "registry": status.get("registry") or {}}
+
+
 def _fit_summary() -> dict | None:
     try:
         raw = json.loads((ROOT / "data" / "inflation_model.json").read_text(encoding="utf-8"))
@@ -630,6 +743,7 @@ def snapshot(db_path: Path, exchange: Exchange | None = None) -> dict:
         sec("paper", lambda: paper(conn, cfg))
         sec("maker", lambda: maker(conn))
         sec("inflation", lambda: inflation(conn))
+        sec("wx", lambda: wx_research(cfg))
         out["paused"] = paused()
         out["strategies"] = STRATEGIES
         p = out.get("pnl") or {}

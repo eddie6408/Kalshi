@@ -127,6 +127,27 @@ class LiveBookReader:
         return (self._get("/series/fee_changes", {"series_ticker": series_ticker})
                 .get("series_fee_change_arr") or [])
 
+    def series_list(self, category: str) -> list[dict]:
+        """WX-1: every series in a category (e.g. "Climate and Weather")."""
+        return self._get("/series", {"category": category}).get("series") or []
+
+    def markets_by_ticker(self, tickers: list[str]) -> list[dict]:
+        """WX-6: current quotes (and results, once settled) for a batch."""
+        if not tickers:
+            return []
+        return self._get("/markets", {"tickers": ",".join(tickers),
+                                      "limit": min(1000, len(tickers))}).get("markets") or []
+
+    def events_page(self, status: str = "open", cursor: str | None = None,
+                    series_ticker: str | None = None, limit: int = 200) -> dict:
+        """WX-1: one page of events with their markets (rules text included)."""
+        params = {"status": status, "limit": limit, "with_nested_markets": "true"}
+        if cursor:
+            params["cursor"] = cursor
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        return self._get("/events", params)
+
     def trades(self, ticker: str, min_ts: int | None = None, limit: int = 1000,
                max_pages: int = 5) -> list[dict]:
         """Public trade prints for one market, oldest pages last (as served).

@@ -640,6 +640,37 @@ def main() -> int:
             WorkerConfig.from_dict("prod_arb", workers_cfg.get("prod_arb"), 60.0),
             prod_arb.run_pass))
 
+    # ---- WX-1..7: weather market taxonomy and extended modeling ---------
+    # Research only (kalshibot/wx). Its own database, public production
+    # market data through the GET-only reader, no trading client. The one
+    # effect on trading: the daily estimator skips a series the registry
+    # finds no longer matches its settlement station/source.
+    wx = None
+    wx_cfg = settings.section("wx_research") or {}
+    if wx_cfg.get("enabled", False):
+        try:
+            from kalshibot.livebooks import LiveBookReader as _WxReader
+            from kalshibot.sources import nws_user_agent as _ua
+            from kalshibot.wx.runner import WxResearch
+            wcfg = settings.section("weather") or {}
+            live_series = {s["ticker_prefix"]: s.get("climate_report") or ""
+                           for s in load_series(wcfg) if s.get("ticker_prefix")}
+            wx = WxResearch(wx_cfg, wcfg, _WxReader(), live_series,
+                            user_agent=_ua(settings.section("sources")),
+                            journal_path=str(settings.path("journal.database_path",
+                                                           "data/journal.db")))
+            for s in engine.forecasts:
+                if getattr(s.estimator, "name", "") == "weather_temperature":
+                    s.estimator.blocked_series = wx.blocked_series
+            supervisor.add(Worker(
+                WorkerConfig.from_dict("wx_research", workers_cfg.get("wx_research"), 120.0),
+                wx.run_pass))
+            print(f"{D}  WX research: registry, point-in-time data, calibration, "
+                  f"extended + hourly models, shadow paper (no orders){X}")
+        except Exception as exc:  # noqa: BLE001
+            log.error("WX research disabled - could not start: %s", exc, exc_info=True)
+            wx = None
+
     # ---- the dashboard: status out, operator requests in ---------------
     # kalshibot/control.py. Files under data/control; the only request is a
     # refresh of market data. Nothing here can trade or change a limit.
@@ -683,6 +714,7 @@ def main() -> int:
                 "breaker": {"halted": bool(engine._halted), "reason": engine._halt_reason,
                             "since": getattr(engine, "_halted_at", "")},
                 "sources": MONITOR.snapshot(),
+                "wx_research": wx.summary() if wx is not None else None,
                 "control": {n: inbox.last_done(n) for n in CONTROL_REQUESTS},
             })
         except Exception as exc:  # noqa: BLE001

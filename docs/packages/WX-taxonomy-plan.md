@@ -1,6 +1,7 @@
 # Weather market taxonomy & extended / seasonal modeling — phased plan
 
-**Status: PLANNED — not implemented.** Review of the operator's "PROMETHEUS —
+**Status: BUILT 2026-09-29 (all seven packages, research only — see section 5).** Originally:
+**PLANNED — not implemented.** Review of the operator's "PROMETHEUS —
 Weather Market Taxonomy & Extended/Seasonal Modeling" master prompt, written
 2026-09-29 against commit `b5a17f9` (48 daily series + multi-model blend
 live). Nothing below is loaded into the bot until each package is approved.
@@ -157,3 +158,40 @@ created / modified, schema changes, classes supported, settlement handling,
 methods, tests added / passed / failed, known limitations, markets in each
 status, production blockers, next step. No claims beyond what the tests and
 data show.
+
+## 5. Build record (2026-09-29) and the WX-4 settlement-rules review
+
+Built on operator instruction ("execute all packages; review WX-4 against
+Kalshi's official weather settlement rules"). Code: `kalshibot/wx/`, worker
+`wx_research` in arb.py, database `data/weather_research.db`, page "Weather
+research" on the dashboard. No order path: the package holds no trading
+client (pinned by test), reads Kalshi through the GET-only LiveBookReader.
+
+### Settlement sources, as the live rules state them (read 2026-09-29)
+
+Kalshi's help centre (updated 2026-07-22): "Each weather market names its
+official settlement source in its market rules ... Always check the specific
+market's rules for its source." Daily: NWS Daily Climate Report; hourly: TWC.
+The live rules are more varied than that summary, which is why WX-1 reads
+every market's own text:
+
+| Class | Series (open today) | Rules name | Detail that matters |
+|---|---|---|---|
+| Daily high/low | KXHIGH*, KXLOWT* (288 markets) | "(CLIxxx) according to The Weather Company" | TWC publishes the NWS climate-report value (checked 12/12 equal); certification GLOBALTEMPERATURE: Source Agency = NWS |
+| Hourly | KXTEMPNYCHS, KXTEMPMIAH, KXTEMPLAXHS, KXTEMPCHIHS (40) | "as reported by Synoptic Data" | Kalshi Weather Index: equal-weight mean of 5-8 ASOS stations (NYCWINDEX etc.), 0.01F |
+| Hourly (Apr 2026) | KXTEMPNYCH | "as reported by Accuweather (for coordinates ...)" | not listed now; would not be priced by WX-5 |
+| Weekly run-length | KXAVGT* (10 stations, 50 markets) | TWC | day = MEAN OF HOURLY values 00:00-23:59 local, rounded to whole degree; strictly greater; <18 hourly values breaks a streak; data as published at expiration |
+| Monthly hourly min | KXSJCLOWT | TWC | ANY single hourly value strictly below T |
+| Degree days | KXHDDCVG (Oct-Dec) | TWC | TWC's published HDD(65) per day, summed |
+| Precipitation | KXRAIN* | TWC / NWS | no model (RESEARCH_ONLY) |
+| Climate one-offs | KXTXURI, KXGTEMP, ... | NWS / NASA / NOAA | no model |
+
+Found in the review: the weekly "average" is NOT (max+min)/2. Phoenix
+2026-09-27: TWC hourly mean 87.2F (-> 87), midpoint 88. WX-4 simulates the
+hourly mean, calibrated against TWC's own hourly means.
+
+### Data sources added (all free, no account)
+TWC Kalshi portal (primary, degree-days, METAR hourly); Open-Meteo forecast
+and previous-runs; NOAA ACIS (30-year climate record); aviationweather.gov
+METARs (hourly index proxy). Synoptic's HF-ASOS feed would need an account:
+not created; hourly stays RESEARCH_ONLY.

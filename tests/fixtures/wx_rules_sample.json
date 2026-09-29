@@ -1,0 +1,316 @@
+{
+ "markets": [
+  {
+   "ticker": "KXTXURI-28DEC31-27JAN01",
+   "event_ticker": "KXTXURI-28DEC31",
+   "series_ticker": "KXTXURI",
+   "title": "Will the average daily minimum temperature in Texas (DFW & IAH) fall below 20\u00b0F for at least 2 days within a 4-day span before Jan 1, 2027?",
+   "rules_primary": "If any span of 4 consecutive calendar days after Issuance and before Jan 1, 2027 contains at least 2 days where the Station Average at Dallas Fort Worth International Airport (DFW) and George Bush Intercontinental Airport, Houston (IAH) is below 20\u00b0F, then the market resolves to Yes.",
+   "rules_secondary": "A \"Qualifying Day\" is a calendar day after Issuance and before Jan 1, 2027 for which the applicable Station Test is met. The Station Test is whether the Station Average for the calendar day is below 20.\n\nA calendar day is after Issuance and before Jan 1, 2027 if the calendar date of that day, as used in the Source Agency's climatological records for the Reference Stations, falls after Issuance and before Jan 1, 2027. \n\nThe Qualifying Days within that span need not be consecutive, and Qualifying Days occurring outside that span do not affect the determination.\n\nThe Station Average is calculated for any calendar day as the arithmetic mean of the Daily Minimum Temperatures for all Reference Stations for that calendar day, computed in degrees Fahrenheit and truncated to one decimal place.\n\nThe Daily Minimum Temperature is the minimum temperature, in degrees Fahrenheit (unless otherwise specified), for a Reference Station for a calendar day, as documented by the Source Agency in its daily or monthly climatological records for that station, using the calendar-day boundaries applied by the Source Agency in those records. If the Source Agency corrects a documented value prior to Expiration, the corrected value shall be used.",
+   "strike_type": "custom",
+   "floor_strike": null,
+   "cap_strike": null,
+   "close_time": "2027-01-01T15:00:00Z",
+   "open_time": "2026-07-22T20:45:00Z",
+   "yes_sub_title": "Before 2027"
+  },
+  {
+   "ticker": "KXSTOWEOPEN-27-15NOV26",
+   "event_ticker": "KXSTOWEOPEN-27",
+   "series_ticker": "KXSTOWEOPEN",
+   "title": "Will Stowe Mountain Resort open before Nov 15, 2026?",
+   "rules_primary": "If Stowe Mountain Resort conducts Seasonal Opening Operations in the 26/27 winter season before Nov 15, 2026, then the market resolves to Yes.",
+   "rules_secondary": "How this is resolved\nSeasonal Opening Operations require at least one passenger lift to carry members of the general public uphill for downhill skiing or snowboarding on resort-designated open terrain. \nThe opening calendar day is determined in Eastern Time.\nA name, owner, operator, or website change does not change the resort's identity.\nIf the ski resort is decommissioned, the market resolves to No.\n\nPayout criteria\nSeason-passholder-only access counts if it requires no additional purchase. \nAny number of lifts, any amount of terrain, and any operating duration count.\nIf its terrain is split across separately operated areas, opening any portion counts. \n\nDoesn't count for payout\nEmployee, contractor, invited-media, private-event, and separately purchased early-access or preview days do not count.\nScenic rides, mountain biking, hiking, tubing, and uphill-only access do not count.\nAnnounced or projected dates do not count. \n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the resort. All trademarks, logos, and brand names are the property of their respective owners.",
+   "strike_type": "custom",
+   "floor_strike": null,
+   "cap_strike": null,
+   "close_time": "2026-11-15T04:59:00Z",
+   "open_time": "2026-09-01T02:00:00Z",
+   "yes_sub_title": "Before Nov 15, 2026"
+  },
+  {
+   "ticker": "KXSJCLOWT-26DEC31-40",
+   "event_ticker": "KXSJCLOWT-26DEC31",
+   "series_ticker": "KXSJCLOWT",
+   "title": "Will the temperature in San Jose drop below 40\u00b0F in December 2026?",
+   "rules_primary": "If any hourly temperature value reported for KSJC in San Jose within December 1, 2026 through December 31, 2026 is strictly less than 40 degrees Fahrenheit, then the market resolves to Yes.",
+   "rules_secondary": "Data for KSJC is available at https://weather.com/kalshi. Temperature values are the hourly temperature observations reported by The Weather Company for KSJC. The market resolves Yes if any single hourly value within December 1, 2026 through December 31, 2026 satisfies the condition; a value exactly equal to 40 degrees does not. Data as published at the Expiration Time will be used; later revisions are disregarded. Hours with no reported value are treated as no observation; if no qualifying value is reported by the Expiration Time, the market resolves to No.",
+   "strike_type": "less",
+   "floor_strike": null,
+   "cap_strike": 40,
+   "close_time": "2027-01-01T07:59:00Z",
+   "open_time": "2026-08-21T17:15:00Z",
+   "yes_sub_title": "Below 40\u00b0F"
+  },
+  {
+   "ticker": "KXHDDCVG-KCVG-01OCT26-31DEC26-T1250",
+   "event_ticker": "KXHDDCVG-KCVG-01OCT26-31DEC26",
+   "series_ticker": "KXHDDCVG",
+   "title": "HDD at Cincinnati below 1,250.00?",
+   "rules_primary": "If the cumulative sum of Heating Degree Days (HDD) at Cincinnati/Northern Kentucky International Airport (station identifier KCVG, WMO identifier 72421) is below 1,250.00 between Oct 1, 2026 and Dec 31, 2026, the market resolves to Yes.",
+   "rules_secondary": "The official observing station is Cincinnati/Northern Kentucky International Airport (station identifier KCVG, WMO identifier 72421). The specified local timezone is America/New_York. The accumulation period includes Oct 1, 2026 through Dec 31, 2026.\n\nA Heating Degree Day (HDD) value measures how far a day's average temperature falls below 65\u00b0F. For each local calendar day, HDD equals 65 minus the daily average temperature in Fahrenheit, floored at zero. Days averaging 65\u00b0F or warmer contribute zero HDD; the excess above 65\u00b0F is not counted and does not offset colder days. For example, a day averaging 40\u00b0F contributes 25.00 HDD, and a day averaging 72\u00b0F contributes 0.00 HDD, not -7.00. The daily value is the HDD (65) figure published by The Weather Company for the station; if that figure is not published, it is calculated from The Weather Company's \"Hourly Mean(F)\" value, which is the arithmetic mean of the hourly temperatures reported for that day. The cumulative sum is the total of these daily values across every day in the specified time period. ",
+   "strike_type": "less",
+   "floor_strike": null,
+   "cap_strike": 1250,
+   "close_time": "2027-01-01T04:59:00Z",
+   "open_time": "2026-09-19T01:00:00Z",
+   "yes_sub_title": "Below 1,250.00"
+  },
+  {
+   "ticker": "KXHMONTH-26OCT",
+   "event_ticker": "KXHMONTH-26OCT",
+   "series_ticker": "KXHMONTH",
+   "title": "Will  Oct 2026 be the hottest Oct ever?",
+   "rules_primary": "If Oct 2026 is the hottest October ever, then the market resolves to Yes.",
+   "rules_secondary": "",
+   "strike_type": null,
+   "floor_strike": null,
+   "cap_strike": null,
+   "close_time": "2026-11-16T03:59:00Z",
+   "open_time": "2026-09-27T14:00:00Z",
+   "yes_sub_title": "Hottest ever"
+  },
+  {
+   "ticker": "KXAVGTKPHX-26OCT04-2",
+   "event_ticker": "KXAVGTKPHX-26OCT04",
+   "series_ticker": "KXAVGTKPHX",
+   "title": "Phoenix \u00b7 Consecutive days with avg temperature above 90\u00b0F (Week of Sep 28)",
+   "rules_primary": "If there is at least 2 or more consecutive days within September 28, 2026 through October 4, 2026 on which the daily average temperature at KPHX in Phoenix is strictly greater than 90 degrees Fahrenheit, then the market resolves to Yes.",
+   "rules_secondary": "How this is resolved\nA day's average temperature is the arithmetic mean of the hourly temperature values reported by The Weather Company for KPHX from 12:00 AM to 11:59 PM local time, rounded to the nearest whole degree.\nOnly days within September 28, 2026 through October 4, 2026 may count toward a streak.\nData as published at the Expiration Time will be used; later revisions are disregarded.\n\nDoesn't count for payout\nAn average of exactly 90 degrees Fahrenheit does not satisfy the condition.\nA day with fewer than 18 reported hourly values does not satisfy the condition and breaks a streak.",
+   "strike_type": "greater_or_equal",
+   "floor_strike": 2,
+   "cap_strike": null,
+   "close_time": "2026-10-05T03:59:59Z",
+   "open_time": "2026-09-28T04:00:00Z",
+   "yes_sub_title": "2+ consecutive days"
+  },
+  {
+   "ticker": "KXRAINNYCW-28SEP26-04OCT26-T0P25",
+   "event_ticker": "KXRAINNYCW-28SEP26-04OCT26",
+   "series_ticker": "KXRAINNYCW",
+   "title": "How much will it rain in New York City in September 28\u2013October 4, 2026?",
+   "rules_primary": "If the total precipitation at NYC in New York City in September 28\u2013October 4, 2026 is strictly greater than 0.25 inches, then the market resolves to Yes.",
+   "rules_secondary": "The total is the sum of The Weather Company's daily precipitation values at NYC from September 28, 2026 through October 4, 2026, inclusive, using its reporting days. If The Weather Company publishes a total for that exact period, that total takes precedence. Data: https://weather.com/kalshi.",
+   "strike_type": "greater",
+   "floor_strike": 0.25,
+   "cap_strike": null,
+   "close_time": "2026-10-05T03:59:00Z",
+   "open_time": "2026-09-28T16:00:00Z",
+   "yes_sub_title": "Above 0.25 inches"
+  },
+  {
+   "ticker": "KXRAIN-26SEP30-NYC",
+   "event_ticker": "KXRAIN-26SEP30",
+   "series_ticker": "KXRAIN",
+   "title": "Will it rain in New York City on Sep 30, 2026?",
+   "rules_primary": "If the total precipitation at CLINYC in New York City in Sep 30, 2026 is strictly greater than 0 inches, then the market resolves to Yes.",
+   "rules_secondary": "Not all weather data is the same. While checking a source like AccuWeather or Google Weather may help guide your decision, the official and final value used to determine this market as reported by the Weather Company.\n\nReading weather data\nData for CLINYC can be found at https://weather.com/kalshi.\n\u201cTrace\u201d amounts (T) and missing daily precipitation values are counted as 0 inches. ",
+   "strike_type": "greater",
+   "floor_strike": 0,
+   "cap_strike": null,
+   "close_time": "2026-10-01T05:00:00Z",
+   "open_time": "2026-09-29T09:10:00Z",
+   "yes_sub_title": "New York City"
+  },
+  {
+   "ticker": "KXLOWTNYC-26SEP29-T52",
+   "event_ticker": "KXLOWTNYC-26SEP29",
+   "series_ticker": "KXLOWTNYC",
+   "title": "Will the minimum temperature be <52\u00b0 on Sep 29, 2026?",
+   "rules_primary": "If the minimum temperature recorded at New York City (CLINYC) for Sep 29, 2026, is less than 52\u00b0 fahrenheit according to The Weather Company, then the market resolves to Yes.",
+   "rules_secondary": "Not all weather data is the same. While checking a source like AccuWeather or Google Weather may help guide your decision, the official and final value used to determine this market is the maximum/minimum temperature as reported by the Weather Company.\n\nReading weather data\nPreliminary Weather Company data may be subject to rounding and conversion differences from the final reported value.\nUse caution when interpreting preliminary Weather Company readings.\n\nIf it is determined in the sole discretion of the Exchange that there is a material error in the initial non-preliminary publication, Expiration may be held until the publication of a non-materially-erroneous data revision or until the Expiration Date, whichever comes first. If no data is available at the end of this period, all markets will resolve to the last fair price determined by Kalshi. Please note, a status of \"Final\" on weather.com/kalshi is provided for convenience only, and does not guarantee data to be error-free and thus exempt from the above.",
+   "strike_type": "less",
+   "floor_strike": null,
+   "cap_strike": 52,
+   "close_time": "2026-09-30T05:00:00Z",
+   "open_time": "2026-09-28T14:00:00Z",
+   "yes_sub_title": "51\u00b0 or below"
+  },
+  {
+   "ticker": "KXHIGHNY-26SEP29-T69",
+   "event_ticker": "KXHIGHNY-26SEP29",
+   "series_ticker": "KXHIGHNY",
+   "title": "Will the maximum temperature be <69\u00b0 on Sep 29, 2026?",
+   "rules_primary": "If the maximum temperature recorded at New York City (CLINYC) for Sep 29, 2026, is less than 69\u00b0 fahrenheit according to The Weather Company, then the market resolves to Yes.",
+   "rules_secondary": "Not all weather data is the same. While checking a source like AccuWeather or Google Weather may help guide your decision, the official and final value used to determine this market is the maximum/minimum temperature as reported by the Weather Company.\n\nReading weather data\nPreliminary Weather Company data may be subject to rounding and conversion differences from the final reported value.\nUse caution when interpreting preliminary Weather Company readings.\n\nIf it is determined in the sole discretion of the Exchange that there is a material error in the initial non-preliminary publication, Expiration may be held until the publication of a non-materially-erroneous data revision or until the Expiration Date, whichever comes first. If no data is available at the end of this period, all markets will resolve to the last fair price determined by Kalshi. Please note, a status of \"Final\" on weather.com/kalshi is provided for convenience only, and does not guarantee data to be error-free and thus exempt from the above.",
+   "strike_type": "less",
+   "floor_strike": null,
+   "cap_strike": 69,
+   "close_time": "2026-09-30T05:00:00Z",
+   "open_time": "2026-09-28T14:00:00Z",
+   "yes_sub_title": "68\u00b0 or below"
+  },
+  {
+   "ticker": "KXTEMPNYCHS-26SEP2907-T55.99",
+   "event_ticker": "KXTEMPNYCHS-26SEP2907",
+   "series_ticker": "KXTEMPNYCHS",
+   "title": "Will the temp in New York City be above 55.99\u00b0 on Sep 29, 2026 at 7am EDT?",
+   "rules_primary": "If the temperature recorded at New York City for Sep 29, 2026 at 7 AM EDT as reported by Synoptic Data, is above 55.99\u00b0, then the market resolves to Yes.",
+   "rules_secondary": "The official final value for this market is determined strictly by the temperature reported by Synoptic Data, calculated in accordance with the Kalshi Weather Index Methodology. Alternative sources\u2014such as NWS Climatological Reports or Google Weather\u2014may serve as references, but are not authoritative and will not be used for market resolution.",
+   "strike_type": "greater",
+   "floor_strike": 55.99,
+   "cap_strike": null,
+   "close_time": "2026-09-29T11:00:00Z",
+   "open_time": "2026-09-29T10:00:00Z",
+   "yes_sub_title": "56\u00b0 or above"
+  },
+  {
+   "ticker": "KXTEMPNYCH-26APR3015-T71.99",
+   "event_ticker": "KXTEMPNYCH-26APR3015",
+   "series_ticker": "KXTEMPNYCH",
+   "title": "",
+   "rules_primary": "If the temperature recorded at Central Park, New York City for Apr 30, 2026 3 PM EDT as reported by Accuweather (for coordinates 40.7812,-73.9665), is above 71.99\u00b0, then the market resolves to Yes.",
+   "rules_secondary": "The official, final value for this market is the temperature reported by the AccuWeather source linked above, not any other weather service.\n\nNWS Climatological Reports, Google Weather, etc. may be useful references, but are not authoritative for resolution.",
+   "strike_type": "greater",
+   "floor_strike": 71.99,
+   "cap_strike": null,
+   "close_time": "2026-04-30T19:00:00Z",
+   "open_time": "2026-04-29T19:00:00Z"
+  }
+ ],
+ "series": {
+  "KXTXURI": {
+   "ticker": "KXTXURI",
+   "title": "Will the average temperature in Texas (DFW & IAH) fall below 20\u00b0F for at least 2 days within a 4-day span?",
+   "frequency": "one_off",
+   "settlement_sources": [
+    {
+     "name": "National Weather Service",
+     "url": "https://www.weather.gov/srh/nwsoffices"
+    }
+   ],
+   "contract_url": "https://assets.kalshi.com/regulatory/product-certifications/URI.pdf"
+  },
+  "KXSTOWEOPEN": {
+   "ticker": "KXSTOWEOPEN",
+   "title": "Stowe Mountain Resort Opening",
+   "frequency": "annual",
+   "settlement_sources": [
+    {
+     "name": "Stowe Mountain Resort Snow & Weather Report",
+     "url": "https://www.stowe.com/the-mountain/mountain-conditions/snow-and-weather-report.aspx"
+    }
+   ],
+   "contract_url": "https://assets.kalshi.com/regulatory/product-certifications/SKIOPEN.pdf"
+  },
+  "KXSJCLOWT": {
+   "ticker": "KXSJCLOWT",
+   "title": "Monthly minimum temperature in San Jose",
+   "frequency": "monthly",
+   "settlement_sources": [
+    {
+     "name": "The Weather Company",
+     "url": "https://weather.com/kalshi"
+    }
+   ],
+   "contract_url": "https://assets.kalshi.com/regulatory/product-certifications/TEMPTHRESHOLD.pdf"
+  },
+  "KXHDDCVG": {
+   "ticker": "KXHDDCVG",
+   "title": "Cincinnati heating degree days",
+   "frequency": "custom",
+   "settlement_sources": [
+    {
+     "name": "The Weather Company",
+     "url": "https://weather.com/kalshi"
+    }
+   ],
+   "contract_url": "https://assets.kalshi.com/regulatory/product-certifications/HDDAREA.pdf"
+  },
+  "KXHMONTH": {
+   "ticker": "KXHMONTH",
+   "title": "Hottest month instance",
+   "frequency": "monthly",
+   "settlement_sources": [
+    {
+     "name": "NCEI",
+     "url": "https://www.ncei.noaa.gov/access/monitoring/climate-at-a-glance/global/time-series"
+    }
+   ],
+   "contract_url": "https://assets.kalshi.com/regulatory/product-certifications/HMONTH.pdf"
+  },
+  "KXAVGTKPHX": {
+   "ticker": "KXAVGTKPHX",
+   "title": "Average Weekly Temp in Phoenix ",
+   "frequency": "weekly",
+   "settlement_sources": [
+    {
+     "name": "The Weather Company",
+     "url": "https://weather.com/kalshi"
+    }
+   ],
+   "contract_url": "https://assets.kalshi.com/regulatory/product-certifications/GLOBALTEMPERATURESUSTAINED.pdf"
+  },
+  "KXRAINNYCW": {
+   "ticker": "KXRAINNYCW",
+   "title": "How much will it rain in NYC this week? ",
+   "frequency": "weekly",
+   "settlement_sources": [
+    {
+     "name": "The Weather Company",
+     "url": "https://weather.com/kalshi"
+    }
+   ],
+   "contract_url": "https://assets.kalshi.com/regulatory/product-certifications/RAINGLOBALPERIOD.pdf"
+  },
+  "KXRAIN": {
+   "ticker": "KXRAIN",
+   "title": "Where will it rain daily",
+   "frequency": "daily",
+   "settlement_sources": [
+    {
+     "name": "The Weather Company",
+     "url": "https://weather.com/kalshi"
+    }
+   ],
+   "contract_url": "https://assets.kalshi.com/regulatory/product-certifications/RAINGLOBALPERIOD.pdf"
+  },
+  "KXLOWTNYC": {
+   "ticker": "KXLOWTNYC",
+   "title": "Lowest temperature in NYC",
+   "frequency": "daily",
+   "settlement_sources": [
+    {
+     "name": "The Weather Company",
+     "url": "https://weather.com/kalshi"
+    }
+   ],
+   "contract_url": "https://assets.kalshi.com/regulatory/product-certifications/GLOBALTEMPERATURE.pdf"
+  },
+  "KXHIGHNY": {
+   "ticker": "KXHIGHNY",
+   "title": "Highest temperature in NYC",
+   "frequency": "daily",
+   "settlement_sources": [
+    {
+     "name": "The Weather Company",
+     "url": "https://weather.com/kalshi"
+    }
+   ],
+   "contract_url": "https://assets.kalshi.com/regulatory/product-certifications/GLOBALTEMPERATURE.pdf"
+  },
+  "KXTEMPNYCHS": {
+   "ticker": "KXTEMPNYCHS",
+   "title": "Hourly Directional NYC Temperature",
+   "frequency": "hourly",
+   "settlement_sources": [
+    {
+     "name": "Synoptic Data",
+     "url": "https://synopticdata.com/"
+    }
+   ],
+   "contract_url": "https://assets.kalshi.com/regulatory/product-certifications/NYCWINDEX.pdf"
+  },
+  "KXTEMPNYCH": {
+   "ticker": "KXTEMPNYCH",
+   "title": "Hourly Directional NYC Temperature",
+   "frequency": "hourly",
+   "settlement_sources": [
+    {
+     "name": "The Weather Company",
+     "url": "https://weather.com/kalshi"
+    }
+   ]
+  }
+ }
+}

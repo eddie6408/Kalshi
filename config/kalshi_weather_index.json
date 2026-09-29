@@ -1,0 +1,214 @@
+{
+ "_source": "Kalshi Weather Index Methodology v1.0 (contract certifications on assets.kalshi.com), read 2026-09-29. Equal base weights; with every member reporting the index equals the plain mean of member temperatures (offsets cancel: B_c = sum w_i b_i). Coordinates: api.weather.gov/stations.",
+ "indexes": {
+  "NYC": {
+   "series": [
+    "KXTEMPNYCHS"
+   ],
+   "timezone": "America/New_York",
+   "members": [
+    {
+     "icao": "KLGA",
+     "name": "New York, La Guardia Airport",
+     "latitude": 40.7792,
+     "longitude": -73.88,
+     "weight": 0.125
+    },
+    {
+     "icao": "KEWR",
+     "name": "Newark, Newark International Airport",
+     "latitude": 40.6825,
+     "longitude": -74.1694,
+     "weight": 0.125
+    },
+    {
+     "icao": "KTEB",
+     "name": "Teterboro, Teterboro Airport",
+     "latitude": 40.8589,
+     "longitude": -74.0567,
+     "weight": 0.125
+    },
+    {
+     "icao": "KCDW",
+     "name": "Caldwell, Essex County Airport",
+     "latitude": 40.8764,
+     "longitude": -74.2831,
+     "weight": 0.125
+    },
+    {
+     "icao": "KHPN",
+     "name": "White Plains - Westchester County Airport",
+     "latitude": 41.0624,
+     "longitude": -73.7046,
+     "weight": 0.125
+    },
+    {
+     "icao": "KFRG",
+     "name": "Farmingdale - Republic Airport",
+     "latitude": 40.7344,
+     "longitude": -73.4164,
+     "weight": 0.125
+    },
+    {
+     "icao": "KSMQ",
+     "name": "Somerville, Somerset Airport",
+     "latitude": 40.624,
+     "longitude": -74.669,
+     "weight": 0.125
+    },
+    {
+     "icao": "KISP",
+     "name": "Islip, Long Island Mac Arthur Airport",
+     "latitude": 40.7939,
+     "longitude": -73.1017,
+     "weight": 0.125
+    }
+   ],
+   "quorum_members": 7,
+   "quorum_weight": 0.875,
+   "contract_pdf": "https://assets.kalshi.com/regulatory/product-certifications/NYCWINDEX.pdf",
+   "pdf_sha256": "ce86fe7a3e3c8f1d1363e5e99238772bd1d4ead726e57fb4097441dc2cf64eb1"
+  },
+  "MIA": {
+   "series": [
+    "KXTEMPMIAH"
+   ],
+   "timezone": "America/New_York",
+   "members": [
+    {
+     "icao": "KMIA",
+     "name": "Miami, Miami International Airport",
+     "latitude": 25.7906,
+     "longitude": -80.3164,
+     "weight": 0.2
+    },
+    {
+     "icao": "KOPF",
+     "name": "Miami, Opa Locka Airport",
+     "latitude": 25.91,
+     "longitude": -80.2831,
+     "weight": 0.2
+    },
+    {
+     "icao": "KFLL",
+     "name": "Fort Lauderdale/Hollywood International Airport",
+     "latitude": 26.0787,
+     "longitude": -80.1622,
+     "weight": 0.2
+    },
+    {
+     "icao": "KFXE",
+     "name": "Fort Lauderdale, Fort Lauderdale Executive Airport",
+     "latitude": 26.2,
+     "longitude": -80.1833,
+     "weight": 0.2
+    },
+    {
+     "icao": "KPMP",
+     "name": "Pompano Beach, Pompano Beach Airpark",
+     "latitude": 26.2456,
+     "longitude": -80.1114,
+     "weight": 0.2
+    }
+   ],
+   "quorum_members": 4,
+   "quorum_weight": 0.8,
+   "contract_pdf": "https://assets.kalshi.com/regulatory/product-certifications/MIAWINDEX.pdf",
+   "pdf_sha256": "f9239740141bf38c95708fc7b954a1b44ecb40a517fe12ebe975597540eeb4b1"
+  },
+  "LAX": {
+   "series": [
+    "KXTEMPLAXHS"
+   ],
+   "timezone": "America/Los_Angeles",
+   "members": [
+    {
+     "icao": "KHHR",
+     "name": "Hawthorne, Hawthorne Municipal Airport",
+     "latitude": 33.9236,
+     "longitude": -118.3319,
+     "weight": 0.2
+    },
+    {
+     "icao": "KLAX",
+     "name": "Los Angeles, Los Angeles International Airport",
+     "latitude": 33.9381,
+     "longitude": -118.3889,
+     "weight": 0.2
+    },
+    {
+     "icao": "KSMO",
+     "name": "Santa Monica, Santa Monica Municipal Airport",
+     "latitude": 34.0158,
+     "longitude": -118.4514,
+     "weight": 0.2
+    },
+    {
+     "icao": "KLGB",
+     "name": "Long Beach, Long Beach Airport",
+     "latitude": 33.8117,
+     "longitude": -118.1464,
+     "weight": 0.2
+    },
+    {
+     "icao": "KSNA",
+     "name": "John Wayne-Orange County Airport",
+     "latitude": 33.6798,
+     "longitude": -117.8674,
+     "weight": 0.2
+    }
+   ],
+   "quorum_members": 4,
+   "quorum_weight": 0.8,
+   "contract_pdf": "https://assets.kalshi.com/regulatory/product-certifications/LAWINDEX.pdf",
+   "pdf_sha256": "b160d8e38e6dc4ce15c837d990b69b96ca0f40ee0dd010b0f2b78c642038583d"
+  },
+  "CHI": {
+   "series": [
+    "KXTEMPCHIHS"
+   ],
+   "timezone": "America/Chicago",
+   "members": [
+    {
+     "icao": "KMDW",
+     "name": "Chicago, Chicago Midway Airport",
+     "latitude": 41.7842,
+     "longitude": -87.7553,
+     "weight": 0.2
+    },
+    {
+     "icao": "KORD",
+     "name": "Chicago, Chicago-O'Hare International Airport",
+     "latitude": 41.9797,
+     "longitude": -87.9044,
+     "weight": 0.2
+    },
+    {
+     "icao": "KPWK",
+     "name": "Chicago / Wheeling, Pal-Waukee Airport",
+     "latitude": 42.1208,
+     "longitude": -87.9047,
+     "weight": 0.2
+    },
+    {
+     "icao": "KDPA",
+     "name": "Chicago / West Chicago, Dupage Airport",
+     "latitude": 41.8964,
+     "longitude": -88.2511,
+     "weight": 0.2
+    },
+    {
+     "icao": "KARR",
+     "name": "Aurora Municipal Airport",
+     "latitude": 41.7713,
+     "longitude": -88.4815,
+     "weight": 0.2
+    }
+   ],
+   "quorum_members": 4,
+   "quorum_weight": 0.8,
+   "contract_pdf": "https://assets.kalshi.com/regulatory/product-certifications/CHIMETROWINDEX.pdf",
+   "pdf_sha256": "d64de13586308c90bed771ec1ddf494c13f51972fda5b92d83d9031a561d4afb"
+  }
+ }
+}

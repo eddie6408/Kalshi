@@ -923,6 +923,13 @@ workers:
     enabled: true
     interval_seconds: 180
 
+  # WX research (kalshibot/wx): wakes every 2 minutes; each task keeps its
+  # own clock (wx_research.every_seconds). Never gated on the exchange: the
+  # weather and the data keep coming.
+  wx_research:
+    enabled: true
+    interval_seconds: 120
+
   # Scoring: what did the temperature actually DO?
   #
   # Fills forecasts.actual_f from NWS observations once a target day is over,
@@ -1158,6 +1165,48 @@ sources:
       roles: [settlement, cross_check]
       endpoint: "https://api.bls.gov/publicAPI/v1/timeseries/data/{series}"
       notes: "Kalshi's CPI source agency. Public v1 API, keyless, rate-limited: read at most twice a day for the official one-decimal CPI prints."
+
+# ---- WX-1..7: weather market taxonomy & extended modeling -------------
+# docs/packages/WX-taxonomy-plan.md. RESEARCH ONLY: its own database, public
+# production market data (GET, no credential), no trading client, no orders.
+# Every class starts RESEARCH_ONLY; WX-7 eligibility is a label and cannot
+# open production (env_guard keeps execution on demo).
+wx_research:
+  enabled: true
+  db_path: data/weather_research.db
+  calibration_path: data/wx_calibration.json      # scripts/fit_wx_calibration.py
+  index_members: config/kalshi_weather_index.json
+  reviews_path: data/control/wx_reviews.json      # operator sign-offs (WX-7)
+  n_paths: 20000                                  # Monte Carlo paths per contract
+  # Third-party quota per UTC day. open_meteo is for the WHOLE process (the
+  # live strategy's calls are counted too); the free tier is ~10k.
+  quota_per_day:
+    open_meteo: 8000
+    twc_climate: 3000
+    acis: 1500
+    kalshi_public: 20000
+    aviationweather: 3000
+  every_seconds:
+    registry: 21600
+    observations: 3600
+    hourly_obs: 10800
+    forecasts: 21600
+    climatology: 86400
+    extended: 1800
+    hourly: 600
+    daily_shadow: 1800
+    resolve: 3600
+    eligibility: 86400
+  paper:
+    base_edge: 0.05          # required net edge before the uncertainty terms
+    band_k: 0.5              # + k x half the model's sensitivity band
+    spread_k: 0.25           # + k x the quoted spread
+    max_band: 0.30           # wider band = model too uncertain: no paper trade
+  eligibility:
+    min_settled: 100
+    max_reliability_gap: 0.10
+    min_paper_trades: 50
+
 
 # ---------------------------------------------------------------------
 # INFLATION  (kalshibot/estimators/inflation.py, kalshibot/inflation_model.py)

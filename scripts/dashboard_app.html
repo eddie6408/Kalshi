@@ -262,6 +262,7 @@ td.r, th.r { text-align: right; }
       <a href="#overview" data-page="overview"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>Overview</a>
       <a href="#trades" data-page="trades"><svg viewBox="0 0 24 24"><path d="M7 7h13M7 12h13M7 17h13M3 7h.01M3 12h.01M3 17h.01"/></svg>Trades &amp; positions</a>
       <a href="#weather" data-page="weather"><svg viewBox="0 0 24 24"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6 2A3.5 3.5 0 0 0 6.5 19z"/></svg>Weather</a>
+      <a href="#wxresearch" data-page="wxresearch"><svg viewBox="0 0 24 24"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>Weather research</a>
       <a href="#inflation" data-page="inflation"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg>Inflation</a>
       <a href="#research" data-page="research"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.5 18.5A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-2.5L14 9V3"/></svg>Research &amp; paper</a>
       <a href="#risk" data-page="risk"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>Portfolio &amp; risk</a>
@@ -391,6 +392,33 @@ td.r, th.r { text-align: right; }
           <div class="legend"><span><span class="sw" style="background:var(--s3)"></span>model</span><span><span class="sw" style="background:var(--s1)"></span>production mid</span><span><span class="sw" style="background:#8793a0"></span>demo mid</span></div></div>
         <div class="spacer"></div>
         <div class="card"><h3>How the model was fitted</h3><p class="desc">Out-of-sample Brier score on months the fit never saw (lower is better), measured error distribution vs a normal curve. From scripts/fit_inflation_model.py.</p><div class="tbl" id="tbl-fit"></div></div>
+      </section>
+
+      <!-- ================================================= WEATHER RESEARCH (WX-1..7) -->
+      <section class="page" id="page-wxresearch">
+        <div class="page-head"><div><h2>Weather research <span class="chip accent">research only · no orders</span></h2>
+          <p>Every Kalshi weather market, classified from <b>its own rules</b> (settlement source, window, rounding), priced by the extended and hourly models, and matched against the production book as <b>shadow paper</b> trades. A class moves up only when its evidence clears the checklist below; production execution stays locked either way.</p></div>
+          <div class="right"><div class="seg" id="seg-wx"><button class="on" data-v="all">All</button><button data-v="weekly">Weekly</button><button data-v="monthly">Monthly</button><button data-v="seasonal">Seasonal</button><button data-v="hourly">Hourly</button><button data-v="research">Research-only</button><button data-v="paper">Paper</button></div></div></div>
+        <div class="grid g-4" id="wx-kpis"></div>
+        <div class="spacer"></div>
+        <div class="grid g-21">
+          <div class="card"><h3>Markets and lifecycle by class</h3><p class="desc">Open markets on production, by contract class and status. Settlement source as read from each market's rules.</p><div class="tbl" id="tbl-wx-life"></div></div>
+          <div class="card"><h3>Data quality &amp; API budget</h3><p class="desc">Observations of the last four days by status and quality flag; third-party calls today against the daily budget (the guard stops before the limit).</p><div id="wx-dq"></div></div>
+        </div>
+        <div class="spacer"></div>
+        <div class="card"><h3>Modelled contracts</h3><p class="desc">Latest model probability with its dispersion band (the same simulation with the error spread ×0.85 and ×1.15), the production quote, and the shadow paper decision. Click a row for the simulated distribution.</p><div class="tbl" id="tbl-wx-contracts"></div></div>
+        <div class="spacer"></div>
+        <div class="grid g-2">
+          <div class="card"><h3>Simulated distribution <span class="hint" id="wx-hist-title"></span></h3><p class="desc" id="wx-hist-desc">Pick a contract above.</p><div class="chart" id="ch-wx-hist" style="height:230px"></div><div class="tbl" id="tbl-wx-days"></div></div>
+          <div class="card"><h3>Class validation</h3><p class="desc">Prediction (Brier vs Kalshi's result, and vs the market mid) and trading (shadow paper P&amp;L with a 95% interval), kept separate. The daily row compares the sharpened shadow model with the live one on the same markets.</p><div class="tbl" id="tbl-wx-report"></div></div>
+        </div>
+        <div class="spacer"></div>
+        <div class="grid g-2">
+          <div class="card"><h3>Production eligibility checklist</h3><p class="desc">Recorded per class. PRODUCTION_ELIGIBLE is a label only: execution stays on demo until you explicitly open it.</p><div class="tbl" id="tbl-wx-elig"></div></div>
+          <div class="card"><h3>Calibration (out of sample)</h3><p class="desc">Blend error by variable and lead day on dates the fit never saw, against the best single model; coverage of the 80% / 90% intervals (a calibrated spread reads 80 / 90).</p><div class="tbl" id="tbl-wx-cal"></div></div>
+        </div>
+        <div class="spacer"></div>
+        <div class="card"><h3>Registry alerts</h3><p class="desc">New series, rules changes (a changed rules hash is a new version and sends the market back to research), quota stops, class status changes.</p><div class="tbl" id="tbl-wx-alerts"></div></div>
       </section>
 
       <!-- ================================================= RESEARCH -->
@@ -914,6 +942,126 @@ function renderInflation() {
   ], Object.entries(fs).map(([k, v]) => ({ k, ...v })), "Not fitted yet - run scripts/fit_inflation_model.py.");
 }
 
+let wxFilter = "all", wxSel = null;
+function histChart(host, h) {
+  host.innerHTML = "";
+  if (!h || !(h.counts || []).length) { host.innerHTML = empty("No distribution recorded for this contract."); return; }
+  const labels = h.values ? h.values.map(v => String(v)) : h.edges.slice(0, -1).map((e, i) => `${(+e).toFixed(1)}–${(+h.edges[i + 1]).toFixed(1)}`);
+  const tot = h.counts.reduce((a, b) => a + b, 0) || 1;
+  const W = host.clientWidth || 500, H = host.clientHeight || 220, m = { l: 40, r: 8, t: 8, b: 26 };
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, height: H }, host);
+  const hi = Math.max(...h.counts) / tot, bw = (W - m.l - m.r) / h.counts.length;
+  const Y = v => m.t + (H - m.t - m.b) * (1 - v / (hi || 1));
+  const ax = svgEl("g", { class: "axis" }, svg);
+  for (const v of niceTicks(0, hi, 3)) { svgEl("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: "gridline" }, ax); const tx = svgEl("text", { x: m.l - 6, y: Y(v) + 3.5, "text-anchor": "end" }, ax); tx.textContent = (100 * v).toFixed(0) + "%"; }
+  h.counts.forEach((c, i) => {
+    const x = m.l + i * bw + bw * .1, w = Math.max(1.5, bw * .8), y = Y(c / tot);
+    svgEl("rect", { x, y, width: w, height: Math.max(1, H - m.b - y), rx: 2, fill: "var(--s1)" }, svg);
+    if (h.counts.length <= 12 || i % Math.ceil(h.counts.length / 8) === 0) { const tx = svgEl("text", { x: x + w / 2, y: H - 8, "text-anchor": "middle", fill: "var(--muted)", style: "font:10px 'JetBrains Mono'" }, svg); tx.textContent = labels[i]; }
+    const hit = svgEl("rect", { x: m.l + i * bw, y: m.t, width: bw, height: H - m.t - m.b, fill: "transparent" }, svg);
+    hit.addEventListener("mousemove", ev => showTip(`<b>${esc(labels[i])}</b>${(100 * c / tot).toFixed(1)}% of paths`, ev.clientX, ev.clientY));
+    hit.addEventListener("mouseleave", hideTip);
+  });
+}
+function wxTerms(r) {
+  const thr = n(r.threshold) === null ? "" : (+r.threshold);
+  if (r.cls === "RUN_LENGTH") return `≥${r.run_k} days in a row, avg ${r.operator} ${thr}°`;
+  if (r.cls === "HOURLY_TEMP") return `${esc(r.at_time || "")} index ${r.operator} ${thr}°`;
+  if (r.cls === "SEASONAL") return `total ${r.operator} ${thr}`;
+  return `${r.operator || ""} ${thr}`;
+}
+function renderWxResearch() {
+  const w = SNAP.wx || {};
+  if (!w.ready) { $("#wx-kpis").innerHTML = errBox("wx") + kpi("Weather research", w.enabled ? "starting" : "off", w.enabled ? "first registry pass has not run yet" : "wx_research.enabled is false"); return; }
+  const life = w.lifecycle || [], cs = w.contracts || [];
+  const tot = life.reduce((a, r) => a + r.n, 0);
+  const modelled = cs.filter(r => n(r.prob) !== null && r.market_status === "open");
+  const papers = cs.filter(r => r.paper && String(r.paper.decision || "").startsWith("PAPER_"));
+  const fc = w.forecasts || {};
+  $("#wx-kpis").innerHTML = errBox("wx") + [
+    kpi("Weather markets open", tot.toLocaleString(), `${new Set(life.map(r => r.cls)).size} classes · registry ${agoT((w.registry || {}).at)}`),
+    kpi("Priced by a model", String(modelled.length), "extended + hourly, research only"),
+    kpi("Shadow paper positions", String(papers.length), "1 contract each, production prices"),
+    kpi("Point-in-time forecasts", (fc.rows || 0).toLocaleString(), `last snapshot ${agoT(fc.last_snapshot)} · ${(fc.history_rows || 0).toLocaleString()} history rows`),
+  ].join("");
+  const by = {};
+  for (const r of life) { const k = r.cls; by[k] = by[k] || { cls: k, n: 0, st: {}, src: {} }; by[k].n += r.n; by[k].st[r.status] = (by[k].st[r.status] || 0) + r.n; if (r.source) by[k].src[r.source] = (by[k].src[r.source] || 0) + r.n; }
+  const stKind = { PAPER_TRADING: "good", RESEARCH_ONLY: "accent", DISABLED: "", CLASSIFIED: "", MODEL_READY: "good", PRODUCTION_ELIGIBLE: "warn" };
+  $("#tbl-wx-life").innerHTML = table([
+    { h: "Class", f: r => `<span class="mono">${esc(r.cls)}</span>` },
+    { h: "Markets", r: 1, f: r => `<span class="num">${r.n}</span>` },
+    { h: "Status", f: r => Object.entries(r.st).map(([s, k]) => chip(`${s} ${k}`, stKind[s] || "")).join(" ") },
+    { h: "Settles on", f: r => Object.keys(r.src).map(s => `<span class="hint">${esc(s)}</span>`).join(", ") || `<span class="hint">—</span>` },
+  ], Object.values(by).sort((a, b) => b.n - a.n), "The registry has not run yet.");
+  const dq = w.data_quality || [], q = w.quota || [], lim = w.quota_limits || {};
+  const dqAgg = {}; for (const r of dq) { const k = `${r.status} / ${r.quality}`; dqAgg[k] = (dqAgg[k] || 0) + r.n; }
+  $("#wx-dq").innerHTML = `<div class="flex" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">${Object.entries(dqAgg).map(([k, v]) => chip(`${k}: ${v}`, k.includes("SUSPECT") || k.includes("STALE") ? "warn" : k.includes("MISSING") ? "bad" : "")).join("") || empty("No observations recorded yet.")}</div>` +
+    table([{ h: "Provider", f: r => `<span class="mono">${esc(r.provider)}</span>` },
+           { h: "Calls today", r: 1, f: r => `<span class="num">${r.calls}</span>` },
+           { h: "Budget", r: 1, f: r => `<span class="num">${lim[r.provider] ?? "—"}</span>` },
+           { h: "", f: r => r.refused ? chip(`stopped ×${r.refused}`, "warn") : "" }], q, "No research calls yet today.");
+  let rowsC = cs;
+  if (wxFilter === "research") rowsC = cs.filter(r => r.status === "RESEARCH_ONLY");
+  else if (wxFilter === "paper") rowsC = papers;
+  else if (wxFilter !== "all") rowsC = cs.filter(r => r.group === wxFilter);
+  rowsC = rowsC.slice(0, 150);
+  $("#tbl-wx-contracts").innerHTML = table([
+    { h: "Market", f: r => `<span class="ticker">${esc(r.ticker)}</span><div class="sub2">${esc(r.cls)} · ${esc(r.station || r.location || "")} · ${esc(r.window_start || "")}${r.window_end && r.window_end !== r.window_start ? " → " + esc(r.window_end) : ""}</div>` },
+    { h: "Terms", f: r => `<span class="hint">${wxTerms(r)}</span>` },
+    { h: "Settles on", f: r => `<span class="hint">${esc(r.source || "?")}</span>` },
+    { h: "Model", r: 1, f: r => n(r.prob) === null ? `<span class="hint">not priced</span>` : `<b class="num">${pct(r.prob, 1)}</b><div class="sub2">${pct(r.prob_lo, 0)}–${pct(r.prob_hi, 0)}</div>` },
+    { h: "Market", r: 1, f: r => n(r.q_bid) === null ? `<span class="hint">—</span>` : `<span class="num">${(100 * r.q_bid).toFixed(0)}/${(100 * (r.q_ask || 0)).toFixed(0)}¢</span>` },
+    { h: "Paper", f: r => r.paper ? (String(r.paper.decision).startsWith("PAPER_") ? chip(`${r.paper.side} @ ${(100 * r.paper.price).toFixed(0)}¢`, "good") + (n(r.paper.pnl) !== null ? ` <span class="num ${cls(r.paper.pnl)}">${sgnUsd(r.paper.pnl)}</span>` : "") : `<span class="hint" title="${esc(r.paper.reason || "")}">pass</span>`) : `<span class="hint">—</span>` },
+    { h: "Status", f: r => chip(r.status, stKind[r.status] || "") + (r.result ? " " + chip("settled " + r.result, "") : "") },
+  ], rowsC, "No modelled contracts in this view yet.");
+  document.querySelectorAll("#tbl-wx-contracts tbody tr").forEach((tr, i) => { tr.style.cursor = "pointer"; tr.onclick = () => { wxSel = rowsC[i].ticker; drawWxHist(); }; });
+  if (!wxSel && modelled.length) wxSel = modelled[0].ticker;
+  drawWxHist();
+  const rep = w.report || {};
+  const repRows = Object.entries(rep).filter(([k]) => k !== "error").map(([k, v]) => ({ k, p: v.prediction || {}, t: v.trading || {} }));
+  $("#tbl-wx-report").innerHTML = table([
+    { h: "Class", f: r => `<span class="mono">${esc(r.k)}</span>` },
+    { h: "Settled", r: 1, f: r => `<span class="num">${r.p.n ?? 0}</span>` },
+    { h: "Brier model / market", r: 1, f: r => r.p.brier !== undefined ? `<span class="num">${(+r.p.brier).toFixed(3)} / ${n(r.p.market_brier) === null ? "—" : (+r.p.market_brier).toFixed(3)}</span>` : r.p.brier_sharp !== undefined ? `<span class="num">sharp ${(+r.p.brier_sharp).toFixed(3)} / live ${(+r.p.brier_live).toFixed(3)}</span>` : "—" },
+    { h: "Paper P&L", r: 1, f: r => n(r.t.pnl_total) === null ? "—" : `<span class="num ${cls(r.t.pnl_total)}">${sgnUsd(r.t.pnl_total)}</span><div class="sub2">${r.t.settled || 0} settled · ${r.t.open || 0} open</div>` },
+  ], repRows, "Nothing settled yet - validation fills in as these markets resolve.");
+  const el = w.eligibility || [];
+  const critNames = { settled_sample: "sample", skill_vs_market: "beats market", calibration: "calibrated", paper_performance: "paper P&L", execution_cost: "costs", risk_review: "risk review", operator_authorization: "your sign-off" };
+  $("#tbl-wx-elig").innerHTML = table([
+    { h: "Class", f: r => `<span class="mono">${esc(r.cls)}</span><div class="sub2">${agoT(r.at)}</div>` },
+    { h: "Status", f: r => chip(r.status, stKind[r.status] || "") },
+    { h: "Criteria", f: r => Object.entries(r.criteria || {}).map(([k, v]) => chip((v.ok ? "✓ " : "✗ ") + (critNames[k] || k), v.ok ? "good" : "")).join(" ") },
+  ], el, "Evaluated daily; nothing recorded yet.");
+  const cal = w.calibration;
+  $("#tbl-wx-cal").innerHTML = cal ? table([
+    { h: "Variable · lead", f: r => `<span class="mono">${esc(r.key.replace("|", " · d"))}</span>` },
+    { h: "n", r: 1, f: r => `<span class="num">${r.n}</span>` },
+    { h: "Blend RMSE", r: 1, f: r => `<b class="num">${(+r.rmse_blend).toFixed(2)}°</b>` },
+    { h: "Best single", r: 1, f: r => `<span class="num">${n(r.rmse_best_single) === null ? "—" : (+r.rmse_best_single).toFixed(2) + "°"}</span><div class="sub2">${esc(r.best_single || "")}</div>` },
+    { h: "80 / 90%", r: 1, f: r => `<span class="num">${pct(r.cover80, 0)} / ${pct(r.cover90, 0)}</span>` },
+  ], (cal.oos || []).filter(r => /\|(1|3|5|7)$/.test(r.key)), "No out-of-sample rows.") : empty("Not fitted yet - scripts/fit_wx_calibration.py");
+  $("#tbl-wx-alerts").innerHTML = table([
+    { h: "When", f: r => `<span class="hint">${localTime(r.at)}</span>` },
+    { h: "Kind", f: r => chip(r.kind, r.kind === "rules_changed" ? "warn" : "") },
+    { h: "Subject", f: r => `<span class="ticker">${esc(r.subject)}</span>` },
+    { h: "Detail", f: r => `<span class="hint">${esc(String(r.detail || "").slice(0, 140))}</span>` },
+  ], w.alerts || [], "No alerts.");
+}
+function drawWxHist() {
+  const w = SNAP.wx || {}, r = (w.contracts || []).find(x => x.ticker === wxSel);
+  if (!r) { $("#ch-wx-hist").innerHTML = empty("Pick a contract above."); $("#tbl-wx-days").innerHTML = ""; return; }
+  $("#wx-hist-title").textContent = r.ticker;
+  const what = r.cls === "RUN_LENGTH" ? "longest run of qualifying days" : r.cls === "SEASONAL" ? "season total" : r.cls === "HOURLY_TEMP" ? "index value" : "window extreme";
+  $("#wx-hist-desc").textContent = r.hist ? `Distribution of the ${what} across ${(r.n_paths || 0).toLocaleString()} simulated paths (${r.model_version || ""}); P(YES) ${pct(r.prob, 1)} ± ${pct(r.mc_se, 2)} Monte Carlo error.` : "This contract is priced analytically (no simulated paths).";
+  histChart($("#ch-wx-hist"), r.hist);
+  $("#tbl-wx-days").innerHTML = (r.days || []).length ? table([
+    { h: "Day", f: d => `<span class="mono">${esc(d.day)}</span>` },
+    { h: "Input", f: d => chip(d.kind, d.kind === "observed" ? "good" : d.kind === "forecast" ? "accent" : "") },
+    { h: "Centre", r: 1, f: d => `<span class="num">${n(d.mean) === null ? "—" : (+d.mean).toFixed(1) + "°"}</span>` },
+    { h: "± sd", r: 1, f: d => `<span class="num">${d.kind === "observed" ? "fixed" : n(d.sd) === null ? "—" : (+d.sd).toFixed(1)}</span>` },
+  ], r.days) : "";
+}
+
 function renderWeather() {
   const w = SNAP.weather || {}, core = SNAP.core || {};
   const kindRow = (k, name) => {
@@ -1118,13 +1266,13 @@ function renderSystem() {
 }
 
 // ----------------------------------------------------------- data + routing
-const PAGES = { overview: "Overview", trades: "Trades & positions", weather: "Weather activity", inflation: "Inflation nowcasts", research: "Research & paper", risk: "Portfolio & risk", system: "System health" };
+const PAGES = { overview: "Overview", trades: "Trades & positions", weather: "Weather activity", wxresearch: "Weather research", inflation: "Inflation nowcasts", research: "Research & paper", risk: "Portfolio & risk", system: "System health" };
 function currentPage() { const h = location.hash.replace("#", ""); return PAGES[h] ? h : "overview"; }
 function renderAll() {
   if (!SNAP) return;
   renderPills(); renderSideFoot(); renderBanners();
   const pg = currentPage();
-  const fns = { overview: () => { renderOverview(); renderBots(); }, trades: renderTrades, weather: renderWeather, inflation: renderInflation, research: renderResearch, risk: renderRisk, system: renderSystem };
+  const fns = { overview: () => { renderOverview(); renderBots(); }, trades: renderTrades, weather: renderWeather, wxresearch: renderWxResearch, inflation: renderInflation, research: renderResearch, risk: renderRisk, system: renderSystem };
   try { fns[pg](); } catch (e) { console.error(e); toast("Render problem", String(e), "bad"); }
 }
 function route() {
@@ -1215,6 +1363,10 @@ document.addEventListener("click", e => { const b = e.target.closest("#btn-reset
 document.querySelectorAll("#seg-strategy button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#seg-strategy button").forEach(x => x.classList.toggle("on", x === b));
   strategyFilter = b.dataset.v; renderAll();
+});
+document.querySelectorAll("#seg-wx button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#seg-wx button").forEach(x => x.classList.toggle("on", x === b));
+  wxFilter = b.dataset.v; renderWxResearch();
 });
 window.addEventListener("hashchange", route);
 let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(renderAll, 150); });

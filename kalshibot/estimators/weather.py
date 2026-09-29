@@ -95,6 +95,10 @@ class WeatherTemperatureEstimator:
         #: the hourly HRRR, corrected against today's readings. Used for
         #: same-day markets within nowcast.max_lead_hours of the end of day.
         self.nowcast_cfg = _nowcast.NowcastConfig.from_dict(self.cfg.get("nowcast"))
+        #: WX-1 registry hook: callable -> set of series whose current rules
+        #: no longer match what this estimator prices (different station or
+        #: settlement source). Those are skipped. It can only remove markets.
+        self.blocked_series = None
 
     def blend_params(self) -> _wb.BlendParams:
         now = time.time()
@@ -301,6 +305,14 @@ class WeatherTemperatureEstimator:
         cfg = self._series_for(market)
         if not cfg:
             return Estimate.skip("market is not in weather.series", self.name)
+        if callable(self.blocked_series):
+            try:
+                blocked = self.blocked_series() or set()
+            except Exception:  # noqa: BLE001
+                blocked = set()
+            if (market.series_ticker or "").upper() in blocked:
+                return Estimate.skip("WX registry: this series' rules no longer match the "
+                                     "station/source priced here (settlement mismatch)", self.name)
 
         tz_name = cfg.get("timezone", "America/New_York")
         target = self.parse_event_date(market, tz_name)
