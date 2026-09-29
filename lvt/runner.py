@@ -525,6 +525,9 @@ class LiveRunner:
         if self._due("prune", 86400, now):
             n = self.tape.prune(cfg.health.tape_retention_days)
             log.info("tape prune removed %d rows", n)
+            self._prune_state(now)
+        if self._due("bookkeeping", 600, now):
+            self._prune_bookkeeping(now)
 
     def _collect_results(self, now: float, limit: int = 500) -> None:
         """Outcomes of markets we recorded and that are no longer quoted
@@ -544,6 +547,32 @@ class LiveRunner:
                 log.info("recorded %d settled market results", n)
         except Exception as exc:                              # noqa: BLE001
             log.warning("result collection failed: %s", exc)
+
+    def _prune_bookkeeping(self, now: float) -> None:
+        """Runner-side per-event/per-market dictionaries (bounded memory)."""
+        self.ctx_state = {k: v for k, v in self.ctx_state.items() if now - v.last_ts < 6 * 3600}
+        self.ctx_last = {k: v for k, v in self.ctx_last.items() if now - v < 6 * 3600}
+        self.event_markets = {k: v for k, v in self.event_markets.items() if now - v[0] < 3600}
+        live = {t for _, tk in self.event_markets.values() for t in tk} | set(self.engine.series)
+        self.companion_info = {k: v for k, v in self.companion_info.items() if k in live}
+        self.event_detector.last = {k: v for k, v in self.event_detector.last.items()
+                                    if now - v[1].fetched_ts < 6 * 3600}
+        ph = self.scanner.probe_hist
+        for t in [t for t, h in ph.items() if not h or now - h[-1][0] > 3600]:
+            ph.pop(t, None)
+
+    def _prune_state(self, now: float) -> None:
+        """State-DB retention: high-volume research rows age out; trades,
+        orders, fills and positions are kept forever."""
+        r = self.cfg.data.get("health", {})
+        short, long_ = float(r.get("state_retention_days", 7)), float(r.get("signal_retention_days", 30))
+        n = 0
+        for table, col, days, where in (("market_states", "ts", short, ""), ("eligibility_log", "ts", short, ""),
+                                         ("health", "ts", long_, ""), ("decisions", "ts", long_, "AND decision='HOLD'"),
+                                         ("signals", "ts", long_, "AND decision IN ('WATCH','NO_EDGE','REJECTED')")):
+            n += self.db.execute(f"DELETE FROM {table} WHERE {col} < ? {where}", (now - days * 86400,)).rowcount
+        n += self.db.execute("DELETE FROM signal_outcomes WHERE signal_id NOT IN (SELECT id FROM signals)").rowcount
+        log.info("state retention removed %d rows", n)
 
     def _write_status(self, now: float) -> None:
         e = self.engine

@@ -80,7 +80,7 @@ min_price = 5.0
 max_price = 95.0
 
 [strategies.DIP]
-enabled = true
+enabled = false                   # BASELINE_V1 trading stopped 2026-09-29 (EXP-001/002 rejected)
 version = "REACTIVE_DIP_V1"
 side = "yes"                      # buy YES after a YES dip
 lookback_s = 900
@@ -103,7 +103,7 @@ min_score = 60
 # "Sell into an increase": YES spiked then turns down = NO dipped and turns up.
 # Implemented as the DIP detector on the NO side - Kalshi has no short sale,
 # downside exposure is BUYING NO.
-enabled = true
+enabled = false                   # BASELINE_V1 trading stopped 2026-09-29 (EXP-001/002 rejected)
 version = "REACTIVE_REVERSAL_V1"
 side = "no"
 lookback_s = 900
@@ -123,7 +123,7 @@ max_short_decline_velocity = -0.2
 min_score = 60
 
 [strategies.MOMENTUM]
-enabled = true
+enabled = false                   # BASELINE_V1 trading stopped 2026-09-29 (EXP-001/002 rejected)
 version = "REACTIVE_MOMENTUM_V1"
 side = "yes"
 window_s = 300
@@ -147,7 +147,7 @@ min_score = 60
 
 [strategies.DOWNTREND]
 # "Sell into a decline": confirmed YES downward momentum = NO upward momentum.
-enabled = true
+enabled = false                   # BASELINE_V1 trading stopped 2026-09-29 (EXP-001/002 rejected)
 version = "REACTIVE_DOWNTREND_V1"
 side = "no"
 window_s = 300
@@ -310,6 +310,8 @@ interval_s = 60
 min_free_disk_gb = 5.0
 max_rss_mb = 600
 tape_retention_days = 30
+state_retention_days = 7          # market_states / eligibility_log
+signal_retention_days = 30        # non-traded signals, HOLD decisions, health
 stale_data_alert_s = 60
 
 [dashboard]

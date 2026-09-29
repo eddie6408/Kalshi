@@ -68,6 +68,7 @@ class Engine:
         self.emergency_reason = ""
         self.record_scanner = record_scanner
         self.counters = {"signals": 0, "buy_signals": 0, "entries": 0, "exits": 0, "rejected": 0}
+        self._last_state_prune = 0.0
 
     # ------------------------------------------------------------------ setup
     def restore(self, now: float) -> None:
@@ -449,7 +450,8 @@ class Engine:
             "score": sig.score, "bid": sig.bid, "ask": sig.ask, "mid": sig.mid, "spread": sig.spread,
             "target": sig.target, "stop": sig.stop, "expected_net_cents": sig.expected_net_cents,
             "reward_risk": sig.reward_risk, "state": sig.state, "regime": sig.regime,
-            "components": sig.components, "explanation": sig.explanation, "text": sig.text(),
+            "components": sig.components, "explanation": sig.explanation,
+            "text": sig.text() if sig.decision != "NO_EDGE" else "REASON: " + "; ".join(sig.reasons),
             "anchor": sig.anchor, "data_ts": sig.data_ts, "position_id": position_id or None,
             "hour_utc": time.gmtime(sig.ts).tm_hour,
         })
@@ -511,6 +513,22 @@ class Engine:
         if len(self.watch_seen) > 20000 or len(self.buy_attempts) > 20000:
             self.watch_seen = {k: v for k, v in self.watch_seen.items() if now - v < 3600}
             self.buy_attempts = {k: v for k, v in self.buy_attempts.items() if now - v < 3600}
+        if now - self._last_state_prune < 600:
+            return
+        self._last_state_prune = now
+        keep = {p.ticker for p in self.book.open_positions()} | {r.ticker for r in self.om.working.values()}
+        if self.owns_metrics:
+            # per-market history of markets not seen for an hour (series are shared, so only the owner prunes)
+            for t in [t for t, s in self.series.items()
+                      if t not in keep and (s.last_snapshot is None or now - s.last_snapshot.ts > 3600)]:
+                self.series.pop(t, None)
+                self.metrics.pop(t, None)
+        for d in (self.scanner_rows, self.last_state, self.last_elig, self.cooldown_until):
+            for t in [t for t in d if t not in self.series and t not in keep]:
+                d.pop(t, None)
+        self.last_hold_log = {k: v for k, v in self.last_hold_log.items() if now - v < 3600}
+        if self.edge is not None:
+            self.edge.prune(set(self.series) | keep, now)
 
     def scanner_json(self) -> list[dict]:
         return sorted(self.scanner_rows.values(), key=lambda r: -(r.get("movement_score") or 0))

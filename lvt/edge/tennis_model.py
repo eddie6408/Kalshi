@@ -25,7 +25,7 @@ def _r(x: float) -> float:
     return round(min(max(x, 1e-4), 1 - 1e-4), 4)       # cache key + numerical safety
 
 
-@lru_cache(maxsize=200_000)
+@lru_cache(maxsize=20_000)   # bounded: implied-strength searches create many keys
 def game_win(p: float, i: int, j: int) -> float:
     """P(server wins the game) from server points i, receiver points j
     (0,1,2,3 = 0,15,30,40; >=3-3 is deuce territory)."""
@@ -41,7 +41,7 @@ def game_win(p: float, i: int, j: int) -> float:
     return p * game_win(p, i + 1, j) + (1 - p) * game_win(p, i, j + 1)
 
 
-@lru_cache(maxsize=200_000)
+@lru_cache(maxsize=20_000)   # bounded: implied-strength searches create many keys
 def tiebreak_win(pa: float, pb: float, i: int, j: int, first: int, target: int = 7) -> float:
     """P(A wins the tiebreak) from A points i, B points j; `first` served
     point 1. Point n (0-based) is served by `first` if n % 4 in (0, 3)."""
@@ -59,7 +59,7 @@ def tiebreak_win(pa: float, pb: float, i: int, j: int, first: int, target: int =
     return q * tiebreak_win(pa, pb, i + 1, j, first, target) + (1 - q) * tiebreak_win(pa, pb, i, j + 1, first, target)
 
 
-@lru_cache(maxsize=200_000)
+@lru_cache(maxsize=20_000)   # bounded: implied-strength searches create many keys
 def set_outcomes(pa: float, pb: float, ga: int, gb: int, server: int, tb_target: int = 7) -> tuple:
     """From games (ga, gb) with `server` serving the next game, returns
     (P(A wins set, A serves next set first), P(A wins, B next),
@@ -84,7 +84,7 @@ def set_outcomes(pa: float, pb: float, ga: int, gb: int, server: int, tb_target:
     return tuple(a_wins_game * x + (1 - a_wins_game) * y for x, y in zip(w, l))
 
 
-@lru_cache(maxsize=200_000)
+@lru_cache(maxsize=20_000)   # bounded: implied-strength searches create many keys
 def match_win(pa: float, pb: float, sa: int, sb: int, server: int, need: int, final_tb: int = 7) -> float:
     """P(A wins the match) at the START of a set with sets (sa, sb)."""
     if sa >= need:

@@ -233,6 +233,24 @@ class EdgeEngine:
             "depth_imbalance": round((s.quote.yes_bid_size - s.quote.yes_ask_size) / tot, 3) if tot else None,
             "liquidity_usd": round(s.liquidity_usd(), 1), "state": ref.state_text})
 
+    def prune(self, live_tickers: set, now: float) -> None:
+        """Forget markets and matches that went quiet (bounded memory)."""
+        for d in (self.ref_hist, self.recorded_ref, self.last_disl):
+            for t in [t for t in d if t not in live_tickers]:
+                d.pop(t, None)
+        for t in [t for t in self.refs.market_match if t not in live_tickers]:
+            self.refs.market_match.pop(t, None)
+        active = {v[0] for v in self.refs.market_match.values()}
+        for ev in [ev for ev, m in self.refs.matches.items() if ev not in active and now - m.state_ts > 3 * 3600]:
+            self.refs.matches.pop(ev, None)
+            self.last_event.pop(ev, None)
+            self.event_seq.pop(ev, None)
+        for t in [t for t, dq in self.flow.trades.items() if not dq or now - dq[-1][0] > 3600]:
+            self.flow.trades.pop(t, None)
+        for k in [k for k in self.flow.book_prev if k.split(":")[0] not in live_tickers]:
+            self.flow.book_prev.pop(k, None)
+        self.no_edge_seen = {k: v for k, v in self.no_edge_seen.items() if now - v < 3600}
+
     def _ref_at(self, ticker: str, ts: float) -> Optional[float]:
         h = self.ref_hist.get(ticker)
         if not h:
