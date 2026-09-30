@@ -536,12 +536,12 @@ profitability:
   min_ev_usd: 0.05
 
 limits:
-  # Raised 100 -> 200 on the operator's instruction 2026-09-30 (DEMO account).
-  # Per-event (30) and per-market (25) caps unchanged.
-  max_total_exposure_usd: 200.0
+  # Operator's instruction 2026-09-30 (DEMO account): total 100 -> 200 -> 300,
+  # per-event 30 -> 60, per-market 25 -> 50.
+  max_total_exposure_usd: 300.0
   # A 25-set structure costs up to $25.00, so the per-event limit needs
   # headroom above that or every full-size trade is refused at the boundary.
-  max_event_exposure_usd: 30.0
+  max_event_exposure_usd: 60.0
   # THE money limit for one market, counting what is already held plus
   # anything bought earlier in the same pass. Until 18 September this was
   # parsed and never read by anything - which is why the bot bought Denver T82
@@ -550,7 +550,7 @@ limits:
   # Note it is $25 here, not the $250 under `risk:` - that one belongs to the
   # retired engine and only the simulator reads it now. THIS is the enforced
   # number.
-  max_market_exposure_usd: 25.0
+  max_market_exposure_usd: 50.0
   max_contracts_per_trade: 25
   max_legs_per_trade: 14
   max_trades_per_scan: 1

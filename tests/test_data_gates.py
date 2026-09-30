@@ -292,5 +292,7 @@ def test_the_live_config_carries_the_approved_thresholds_and_exposure():
     c = yaml.safe_load((Path(__file__).resolve().parents[1] / "config.yaml").read_text())
     g = c["sources"]["gates"]
     assert g["conflict_threshold_high_f"] == 4.0 and g["conflict_threshold_low_f"] == 5.0
-    assert c["limits"]["max_total_exposure_usd"] == 200.0
-    assert c["limits"]["max_market_exposure_usd"] == 25.0 and c["limits"]["max_event_exposure_usd"] == 30.0
+    assert c["limits"]["max_total_exposure_usd"] == 300.0
+    assert c["limits"]["max_market_exposure_usd"] == 50.0 and c["limits"]["max_event_exposure_usd"] == 60.0
+    # the event cap keeps headroom above the market cap
+    assert c["limits"]["max_event_exposure_usd"] > c["limits"]["max_market_exposure_usd"]
