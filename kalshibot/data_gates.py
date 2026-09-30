@@ -40,6 +40,11 @@ BAD_QC_FLAGS = {"X", "Q"}
 class GateConfig:
     conflict_hard_cap_f: float = 5.0
     conflict_threshold_f: float | None = None      # fitted; None = not set yet
+    #: Per-kind fitted thresholds (daily HIGH / LOW markets). Each falls back
+    #: to conflict_threshold_f when unset. Lows get their own because late in
+    #: the day the NWS gridpoint "low" covers only the remaining hours.
+    conflict_threshold_high_f: float | None = None
+    conflict_threshold_low_f: float | None = None
     conflict_mode: str = "shadow"                  # applies to the fitted threshold
     source_down_mode: str = "shadow"
     stale_mode: str = "shadow"
@@ -57,7 +62,13 @@ class GateConfig:
                 raise ValueError(f"sources.gates.{key} must be one of {MODES}, got {v!r}")
             return v
         thr = d.get("conflict_threshold_f")
+
+        def opt(key):
+            v = d.get(key)
+            return float(v) if v not in (None, "") else None
         return cls(
+            conflict_threshold_high_f=opt("conflict_threshold_high_f"),
+            conflict_threshold_low_f=opt("conflict_threshold_low_f"),
             conflict_hard_cap_f=float(d.get("conflict_hard_cap_f", 5.0)),
             conflict_threshold_f=float(thr) if thr not in (None, "") else None,
             conflict_mode=mode("conflict_mode", "shadow"),
@@ -109,9 +120,16 @@ def evaluate(evidence: dict, cfg: GateConfig, monitor: SourceMonitor | None = No
         if gap > cfg.conflict_hard_cap_f:
             fire("DATA_CONFLICT", "enforce",
                  f"{what} - past the {cfg.conflict_hard_cap_f:g}F hard cap")
-        elif cfg.conflict_threshold_f is not None and gap > cfg.conflict_threshold_f:
-            fire("DATA_CONFLICT", cfg.conflict_mode,
-                 f"{what} - past the {cfg.conflict_threshold_f:g}F fitted threshold")
+        else:
+            kind = str(ev.get("kind") or "").lower()
+            thr = {"high": cfg.conflict_threshold_high_f,
+                   "low": cfg.conflict_threshold_low_f}.get(kind)
+            if thr is None:
+                thr = cfg.conflict_threshold_f
+            if thr is not None and gap > thr:
+                fire("DATA_CONFLICT", cfg.conflict_mode,
+                     f"{what} - past the {thr:g}F fitted threshold"
+                     f"{' for daily ' + kind + 's' if kind in ('high', 'low') else ''}")
 
     # ---- SOURCE_UNAVAILABLE --------------------------------------------
     if monitor is not None and strategy:

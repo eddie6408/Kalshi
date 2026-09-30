@@ -265,3 +265,32 @@ def test_checks_are_recorded_past_the_lead_gate_but_not_acted_on():
             assert sent == []
     finally:
         fmod.ALERTS = old
+
+
+def test_highs_and_lows_have_their_own_conflict_thresholds():
+    """2026-09-30 re-fit: highs 4.0F (approved); lows keep the 5F cap until
+    their own fit - late-day NWS lows cover only the remaining hours."""
+    from kalshibot.data_gates import GateConfig, evaluate
+    g = GateConfig.from_dict({"conflict_threshold_f": 3.0, "conflict_threshold_high_f": 4.0,
+                              "conflict_threshold_low_f": 5.0, "conflict_mode": "enforce"})
+    def ev(kind, diff):
+        return {"kind": kind, "cross_check_diff_f": diff, "ensemble_mean_f": 70,
+                "cross_check_f": 70 - diff, "cross_check_source": "nws"}
+    assert evaluate(ev("high", 3.5), g).blocked is None          # under 4.0
+    assert evaluate(ev("high", 4.2), g).blocked is not None      # over 4.0
+    assert evaluate(ev("low", 4.8), g).blocked is None           # lows: only the 5F cap
+    assert evaluate(ev("low", 5.5), g).blocked is not None       # hard cap
+    assert evaluate(ev("", 3.5), g).blocked is not None          # unknown kind: generic 3.0
+    shadow = GateConfig.from_dict({"conflict_threshold_high_f": 4.0, "conflict_mode": "shadow"})
+    r = evaluate(ev("high", 4.2), shadow)
+    assert r.blocked is None and r.verdicts[0].label == "WOULD_DATA_CONFLICT"
+
+
+def test_the_live_config_carries_the_approved_thresholds_and_exposure():
+    import yaml
+    from pathlib import Path
+    c = yaml.safe_load((Path(__file__).resolve().parents[1] / "config.yaml").read_text())
+    g = c["sources"]["gates"]
+    assert g["conflict_threshold_high_f"] == 4.0 and g["conflict_threshold_low_f"] == 5.0
+    assert c["limits"]["max_total_exposure_usd"] == 200.0
+    assert c["limits"]["max_market_exposure_usd"] == 25.0 and c["limits"]["max_event_exposure_usd"] == 30.0

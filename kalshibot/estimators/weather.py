@@ -364,6 +364,7 @@ class WeatherTemperatureEstimator:
             evidence={
                 "city": cfg.get("label", cfg.get("ticker_prefix")),
                 "station": cfg.get("station"),
+                "kind": cfg.get("kind", "high"),
                 "target_date": target.isoformat(),
                 "strike": label,
                 "ensemble_members": fc.n_members,

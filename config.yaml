@@ -536,7 +536,9 @@ profitability:
   min_ev_usd: 0.05
 
 limits:
-  max_total_exposure_usd: 100.0
+  # Raised 100 -> 200 on the operator's instruction 2026-09-30 (DEMO account).
+  # Per-event (30) and per-market (25) caps unchanged.
+  max_total_exposure_usd: 200.0
   # A 25-set structure costs up to $25.00, so the per-event limit needs
   # headroom above that or every full-size trade is refused at the boundary.
   max_event_exposure_usd: 30.0
@@ -1052,6 +1054,15 @@ sources:
     # under 20 city-days the percentile is mostly noise. Re-fit ~30 Sep and
     # enforce only on the operator's approval.
     conflict_threshold_f: 3.0
+    # Re-fit 2026-09-30 (68 city-days, 25-29 Sep), split by market kind:
+    #   highs 47 city-days, p95 3.66F -> 4.0F  (APPROVED by the operator
+    #         2026-09-30; would have blocked 6 city-days, 0 trades)
+    #   lows  21 city-days from ONE date, outliers to 11F (late-day NWS lows
+    #         cover only the remaining hours) -> not fitted; lows keep the
+    #         5F hard cap until the ~7 Oct review.
+    # Shadow for a day, then enforce.
+    conflict_threshold_high_f: 4.0
+    conflict_threshold_low_f: 5.0
     conflict_mode: shadow
     # A source the strategy requires (sources.registry.*.required_by) is DOWN.
     source_down_mode: shadow
