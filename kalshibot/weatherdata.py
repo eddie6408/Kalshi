@@ -55,6 +55,29 @@ HRRR_MODEL = "gfs_hrrr"
 HRRR_META_URL = "https://api.open-meteo.com/data/ncep_hrrr_conus/static/meta.json"
 HRRR_CACHE_SECONDS = 600
 
+#: Open-Meteo refused us (429: the free tier's daily / hourly / minute limit).
+#: Every caller backs off until this monotonic time; the NWS fallback prices
+#: meanwhile. Module-level so the research layer (wx.quota) defers too.
+_OPEN_METEO_BACKOFF = {"until": 0.0, "step": 0}
+BACKOFF_FIRST_SECONDS = 300
+BACKOFF_MAX_SECONDS = 3600
+
+
+def open_meteo_backing_off() -> bool:
+    return time.monotonic() < _OPEN_METEO_BACKOFF["until"]
+
+
+def _note_rate_limited() -> float:
+    step = _OPEN_METEO_BACKOFF["step"]
+    wait = min(BACKOFF_MAX_SECONDS, BACKOFF_FIRST_SECONDS * (2 ** step))
+    _OPEN_METEO_BACKOFF["until"] = time.monotonic() + wait
+    _OPEN_METEO_BACKOFF["step"] = step + 1
+    return wait
+
+
+def _note_ok() -> None:
+    _OPEN_METEO_BACKOFF["step"] = 0
+
 #: Station readings are re-read this often, independently of the forecast
 #: cache. They used to ride along with a 30-minute forecast, so the live
 #: "high so far" could be half an hour old at exactly the moment it matters.
@@ -198,6 +221,10 @@ class WeatherData:
         self._model_runs: tuple[float, dict] | None = None
         self.obs_refresh_seconds = OBS_REFRESH_SECONDS
         self._hrrr: dict = {}
+        #: The raw ensemble response per location. One response covers every
+        #: day in the window and both the high and the low; caching it per
+        #: (date, kind) made ~4x the requests for identical data.
+        self._ens_raw: dict = {}
 
     # ------------------------------------------------------------------
     def daily_extreme_forecast(
@@ -346,6 +373,11 @@ class WeatherData:
 
     # ------------------------------------------------------------------
     def _from_ensemble(self, lat, lon, tz_name, target_date, kind) -> DailyTempForecast | None:
+        if target_date < dt.datetime.now(ZoneInfo(tz_name)).date():
+            # The day is over locally (its market stays open until the report
+            # settles it). A forecast window starts today, so asking produced
+            # "0 usable members" warnings and counted as a source failure.
+            return None
         params = {
             "latitude": lat,
             "longitude": lon,
@@ -359,21 +391,35 @@ class WeatherData:
             "forecast_days": self.forecast_days,
         }
         src = "open_meteo_ensemble"
-        retrieved_at = dt.datetime.now(dt.timezone.utc)
-        t0 = time.monotonic()
-        status = None
-        try:
-            r = self._session.get(ENSEMBLE_URL, params=params, timeout=self.timeout)
-            status = r.status_code
-            r.raise_for_status()
-            payload = r.json()
-        except Exception as exc:  # noqa: BLE001
-            self.monitor.record(src, False, status=status,
-                                latency_ms=(time.monotonic() - t0) * 1000,
-                                error=f"{type(exc).__name__}: {exc}")
-            log.warning("Open-Meteo ensemble unavailable: %s", exc)
-            return None
-        latency_ms = (time.monotonic() - t0) * 1000
+        raw_key = (round(lat, 3), round(lon, 3), tz_name, self.forecast_days)
+        hit = self._ens_raw.get(raw_key)
+        if hit and time.time() - hit[0] < self.cache.ttl:
+            _, payload, status, latency_ms, retrieved_at = hit
+        else:
+            if open_meteo_backing_off():
+                return None           # rate-limited: the NWS fallback prices meanwhile
+            retrieved_at = dt.datetime.now(dt.timezone.utc)
+            t0 = time.monotonic()
+            status = None
+            try:
+                r = self._session.get(ENSEMBLE_URL, params=params, timeout=self.timeout)
+                status = r.status_code
+                r.raise_for_status()
+                payload = r.json()
+            except Exception as exc:  # noqa: BLE001
+                self.monitor.record(src, False, status=status,
+                                    latency_ms=(time.monotonic() - t0) * 1000,
+                                    error=f"{type(exc).__name__}: {exc}")
+                if status == 429:
+                    wait = _note_rate_limited()
+                    log.warning("Open-Meteo ensemble rate-limited (429); backing off %.0f min "
+                                "- the NWS forecast prices meanwhile", wait / 60)
+                else:
+                    log.warning("Open-Meteo ensemble unavailable: %s", exc)
+                return None
+            latency_ms = (time.monotonic() - t0) * 1000
+            _note_ok()
+            self._ens_raw[raw_key] = (time.time(), payload, status, latency_ms, retrieved_at)
 
         blocks = payload if isinstance(payload, list) else [payload]
         members: list[float] = []

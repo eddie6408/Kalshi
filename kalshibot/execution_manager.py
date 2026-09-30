@@ -72,6 +72,8 @@ class LegExecution:
     fee_usd: float = 0.0
     error: str = ""
     submitted_at: datetime | None = None
+    #: contracts sold back by recovery (the reconciler expects filled - unwound)
+    unwound: int = 0
 
     @property
     def shortfall(self) -> int:
@@ -378,11 +380,30 @@ class ExecutionManager:
             if not price:
                 log.error("cannot unwind %s: no bid to sell into", lx.leg.ticker)
                 return False
-            self.exec_client.place_demo_order(
+            resp = self.exec_client.place_demo_order(
                 ticker=lx.leg.ticker, action="sell", side=lx.leg.side,
                 count=lx.filled, limit_price_cents=price,
             )
-            result.unwound.append(f"{lx.leg.ticker} x{lx.filled} @ {price}c")
+            order = (resp or {}).get("order") or {}
+            sold = order.get("filled_count")
+            if sold is None:
+                # No fill count in the response: trust an "executed" status,
+                # otherwise assume nothing sold and say so.
+                sold = lx.filled if order.get("status") == "executed" else 0
+            sold = max(0, min(int(sold), lx.filled))
+            if sold < lx.filled and order.get("order_id"):
+                # Do not leave a resting sell behind: cancel it and report the
+                # contracts still held, rather than claiming a clean unwind.
+                try:
+                    self.exec_client.cancel_demo_order(order["order_id"])
+                except Exception as exc:  # noqa: BLE001
+                    log.error("could not cancel unwind remainder %s: %s", order["order_id"], exc)
+            lx.unwound = sold
+            result.unwound.append(f"{lx.leg.ticker} x{sold}/{lx.filled} @ {price}c")
+            if sold < lx.filled:
+                log.error("TRADE UNWIND PARTIAL sold %d of %d %s %s @ %dc - %d still held",
+                          sold, lx.filled, lx.leg.side, lx.leg.ticker, price, lx.filled - sold)
+                return False
             log.info("TRADE UNWIND         sold %d %s %s @ %dc",
                      lx.filled, lx.leg.side, lx.leg.ticker, price)
             return True
@@ -420,7 +441,9 @@ class ExecutionManager:
         # immediately reported "expected +25, exchange says +0" on a trade
         # that had in fact filled - a false alarm that looks exactly like the
         # real thing. Give it a few tries before believing it.
-        expected_tickers = {lx.leg.ticker for lx in result.legs if lx.filled}
+        # What recovery sold back is no longer held: expecting it produced
+        # "expected +25, exchange says +0" after every clean unwind.
+        expected_tickers = {lx.leg.ticker for lx in result.legs if lx.filled - lx.unwound}
         actual: dict[str, int] = {}
         for attempt in range(self.reconcile_attempts):
             try:
@@ -442,7 +465,8 @@ class ExecutionManager:
         for lx in result.legs:
             if lx.filled == 0:
                 continue
-            signed = lx.filled if lx.leg.side == "yes" else -lx.filled
+            held = lx.filled - lx.unwound
+            signed = held if lx.leg.side == "yes" else -held
             if lx.leg.action == "sell":
                 signed = -signed
             expected[lx.leg.ticker] = expected.get(lx.leg.ticker, 0) + signed

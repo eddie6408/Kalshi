@@ -82,6 +82,16 @@ class QuotaGuard:
         cross the budget - the caller skips the work."""
         with self._lock:
             day = self.today()
+            if provider == "open_meteo":
+                from ..weatherdata import open_meteo_backing_off
+                if open_meteo_backing_off():
+                    # The live strategy has been rate-limited: research
+                    # spends nothing on Open-Meteo until it recovers.
+                    self.store.execute(
+                        "INSERT INTO wx_quota (provider, day, calls, refused) VALUES (?,?,0,1) "
+                        "ON CONFLICT(provider, day) DO UPDATE SET refused = refused + 1",
+                        (provider, day))
+                    return False
             if self.remaining(provider) < n:
                 self.store.execute(
                     "INSERT INTO wx_quota (provider, day, calls, refused) VALUES (?,?,0,1) "

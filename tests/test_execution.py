@@ -356,3 +356,37 @@ def test_repricing_does_not_rescue_an_opportunity_whose_price_moved():
     r = manager(ex, mk=worse, reprice_before_send=True).execute(op)
     assert r.outcome is TradeOutcome.ABORTED_PRE_TRADE
     assert not ex.sent
+
+
+# ---- 2026-09-30: a clean unwind was reported as a reconcile mismatch ----
+def test_a_clean_unwind_reconciles_to_zero_not_a_mismatch():
+    """Leg A filled 10, leg B filled 0, recovery sold A back. The exchange
+    holds nothing - which is what the reconciler must now expect (it used to
+    say 'expected +10, exchange says +0')."""
+    ex = FakeExec(fill_plan={"B": 0})
+    mk = FakeMarket({"A": deep("A"), "B": deep("B")})
+    r = manager(ex, pf=FakePortfolio(positions=[]), mk=mk).execute(
+        opportunity(("A", "B"), sides=("yes",)))
+    assert r.outcome is TradeOutcome.PARTIAL_RECOVERED
+    assert not any("exchange says" in n for n in r.notes), r.notes
+    assert "reconciled" in r.notes
+
+
+class SellFillsPartly(FakeExec):
+    def place_demo_order(self, ticker, action, side, count, limit_price_cents, **kw):
+        out = super().place_demo_order(ticker, action, side, count, limit_price_cents, **kw)
+        if action == "sell":
+            o = out["order"]
+            o["filled_count"], o["status"] = 3, "resting"
+        return out
+
+
+def test_a_partial_unwind_cancels_the_rest_and_reports_what_is_still_held():
+    ex = SellFillsPartly(fill_plan={"B": 0})
+    mk = FakeMarket({"A": deep("A"), "B": deep("B")})
+    pf = FakePortfolio(positions=[Position(ticker="A", contracts=7)])     # 10 - 3 sold
+    r = manager(ex, pf=pf, mk=mk).execute(opportunity(("A", "B"), sides=("yes",)))
+    sell_ids = [oid for oid, o in ex.orders.items() if o["filled_count"] == 3]
+    assert sell_ids and sell_ids[0] in ex.cancelled      # no resting sell left behind
+    assert r.outcome is not TradeOutcome.PARTIAL_RECOVERED
+    assert not any("exchange says" in n for n in r.notes), r.notes   # 7 expected, 7 held

@@ -385,3 +385,17 @@ def test_kalshi_reads_back_off_on_429():
     assert with_backoff(flaky, sleep=waits.append) == "ok" and waits == [2.0, 4.0]
     with pytest.raises(E):
         with_backoff(lambda: (_ for _ in ()).throw(E(403)), sleep=waits.append)
+
+
+def test_research_spends_nothing_on_open_meteo_while_the_live_strategy_backs_off():
+    from kalshibot import weatherdata as wd
+    s = _store()
+    q = QuotaGuard(s, {"open_meteo": 1000}, sleep=lambda x: None)
+    import time as _t
+    wd._OPEN_METEO_BACKOFF.update(until=_t.monotonic() + 60, step=1)
+    try:
+        assert not q.allow("open_meteo")
+        assert q.allow("twc_climate")                     # other providers unaffected
+    finally:
+        wd._OPEN_METEO_BACKOFF.update(until=0.0, step=0)
+    assert q.allow("open_meteo")

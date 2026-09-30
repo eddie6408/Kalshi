@@ -384,3 +384,33 @@ def test_it_connects_subscribes_and_fills_the_book_for_real():
         t.join(timeout=5)
     finally:
         server.stop()
+
+
+def test_a_rollover_reconnect_is_not_an_error_and_does_not_wait():
+    """2026-09-30: every rollover logged '[Errno 9] Bad file descriptor' as a
+    feed failure and waited before reconnecting."""
+    import threading as _th
+    from kalshibot.market_state import MarketState
+    from kalshibot.wsfeed import FeedConfig, KalshiFeed
+    f = KalshiFeed(MarketState(None), None, FeedConfig(enabled=True, reconnect_min=30))
+    stop = _th.Event()
+    n = {"connect": 0}
+
+    def connect():
+        n["connect"] += 1
+        if n["connect"] >= 3:
+            stop.set()
+
+    def pump(_stop):
+        if n["connect"] == 1:
+            f._intentional_drop = True             # follow() rolled over
+            raise OSError(9, "Bad file descriptor")
+        raise OSError("peer closed")
+    f._connect, f._pump = connect, pump
+    t = _th.Thread(target=f.run_forever, args=(stop,))
+    t.start()
+    t.join(5)
+    # connect 1 -> intentional drop -> immediate connect 2 (no 30s wait) -> a
+    # real failure is counted and waits (stop is set on connect 3)
+    assert n["connect"] >= 2 and f.stats.errors == 1
+    stop.set()

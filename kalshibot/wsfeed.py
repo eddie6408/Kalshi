@@ -143,6 +143,7 @@ class KalshiFeed:
         #: exchange will not re-snapshot is not asked for on every message
         self._resnap_at: dict[str, float] = {}
         self._last_rollover = time.monotonic()
+        self._intentional_drop = False
         #: Package 3a: every snapshot and delta applied, kept for replay.
         self.recorder = None
         # The store serves a quiet book this feed maintains for as long as
@@ -187,6 +188,7 @@ class KalshiFeed:
             # Reconnecting resubscribes to exactly the new set.
             log.info("FEED  working set moved on; following %d current markets",
                      len(self._wanted))
+            self._intentional_drop = True
             self._drop("resubscribing to the current working set")
         elif ws is not None:
             self._send_subscribe(new)
@@ -200,6 +202,7 @@ class KalshiFeed:
         delay = self.cfg.reconnect_min
         while not stop.is_set():
             try:
+                self._intentional_drop = False
                 self._connect()
                 delay = self.cfg.reconnect_min      # a good connection resets it
                 self._pump(stop)
@@ -208,6 +211,12 @@ class KalshiFeed:
                 # loop against it would be a retry loop against production.
                 raise
             except Exception as exc:  # noqa: BLE001
+                if self._intentional_drop:
+                    # We closed the socket ourselves to resubscribe (rollover);
+                    # the pump reading it then fails with EBADF. Not an error,
+                    # and no reason to wait before reconnecting.
+                    log.info("FEED  reconnecting to follow the new working set")
+                    continue            # finally drops; reconnect now, backoff kept
                 self.stats.errors += 1
                 self.stats.last_error = str(exc)
                 log.warning("FEED  %s; falling back to REST and retrying in "

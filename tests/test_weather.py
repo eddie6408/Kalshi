@@ -305,3 +305,56 @@ def test_the_series_is_derived_when_the_payload_omits_it():
                           "series_ticker": "KXSOMETHINGELSE"})
     assert m2.series_ticker == "KXSOMETHINGELSE"
     assert Market.from_api({"ticker": ""}).series_ticker == ""
+
+
+# ---- 2026-09-30: 1,284 refused calls during a 9.5-hour Open-Meteo limit ----
+def test_one_ensemble_response_serves_every_date_and_kind_and_429_backs_off():
+    import datetime as _dt
+    from kalshibot import weatherdata as wd
+
+    class Resp:
+        def __init__(self, code, payload=None):
+            self.status_code, self._p = code, payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                import requests
+                raise requests.HTTPError(f"{self.status_code}", response=self)
+
+        def json(self):
+            return self._p
+
+    today = _dt.date.today()
+    times = [f"{(today + _dt.timedelta(days=d)).isoformat()}T{h:02d}:00" for d in range(3) for h in range(24)]
+    payload = {"hourly": {"time": times, **{f"temperature_2m_member{i:02d}": [60 + i * 0.1 + (h % 24) / 3
+                                                                             for h in range(len(times))]
+                                             for i in range(10)}}}
+    calls = []
+
+    class Session:
+        headers = {}
+
+        def __init__(self, code=200):
+            self.code = code
+
+        def get(self, url, params=None, timeout=None):
+            calls.append(url)
+            return Resp(self.code, payload)
+
+    d = wd.WeatherData(cache_seconds=1800)
+    d._session = Session()
+    d._model_run_vintage = lambda: (None, {})
+    wd._OPEN_METEO_BACKOFF.update(until=0.0, step=0)
+    for day in (today, today + _dt.timedelta(days=1)):
+        for kind in ("high", "low"):
+            assert d._from_ensemble(40.0, -74.0, "America/New_York", day, kind) is not None
+    assert len([c for c in calls if c == wd.ENSEMBLE_URL]) == 1       # was 4
+    # rate-limited: back off, stop calling, let the NWS fallback price
+    d2 = wd.WeatherData(cache_seconds=1800)
+    d2._session = Session(429)
+    calls.clear()
+    assert d2._from_ensemble(41.0, -75.0, "America/New_York", today, "high") is None
+    assert wd.open_meteo_backing_off()
+    assert d2._from_ensemble(41.0, -75.0, "America/New_York", today, "low") is None
+    assert len(calls) == 1                                           # no hammering
+    wd._OPEN_METEO_BACKOFF.update(until=0.0, step=0)
