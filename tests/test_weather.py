@@ -358,3 +358,34 @@ def test_one_ensemble_response_serves_every_date_and_kind_and_429_backs_off():
     assert d2._from_ensemble(41.0, -75.0, "America/New_York", today, "low") is None
     assert len(calls) == 1                                           # no hammering
     wd._OPEN_METEO_BACKOFF.update(until=0.0, step=0)
+
+
+def test_a_day_already_over_is_not_a_failed_source():
+    import datetime as _dt
+    from kalshibot import weatherdata as wd
+    today = _dt.date.today()
+    times = [f"{(today + _dt.timedelta(days=d)).isoformat()}T{h:02d}:00" for d in range(2) for h in range(24)]
+    payload = {"hourly": {"time": times, "temperature_2m_member01": [60.0] * len(times)}}
+
+    class R:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return payload
+    recorded = []
+
+    class Mon:
+        def record(self, *a, **k):
+            recorded.append((a, k))
+
+        def observe(self, *a, **k):
+            return None
+    d = wd.WeatherData(monitor=Mon())
+    d._session = type("S", (), {"get": lambda self, *a, **k: R(), "headers": {}})()
+    wd._OPEN_METEO_BACKOFF.update(until=0.0, step=0)
+    assert d._from_ensemble(40.0, -74.0, "Pacific/Kiritimati",
+                            today - _dt.timedelta(days=3), "high") is None
+    assert not [r for r in recorded if r[0][1] is False]      # no failure recorded

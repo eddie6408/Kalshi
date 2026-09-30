@@ -373,11 +373,6 @@ class WeatherData:
 
     # ------------------------------------------------------------------
     def _from_ensemble(self, lat, lon, tz_name, target_date, kind) -> DailyTempForecast | None:
-        if target_date < dt.datetime.now(ZoneInfo(tz_name)).date():
-            # The day is over locally (its market stays open until the report
-            # settles it). A forecast window starts today, so asking produced
-            # "0 usable members" warnings and counted as a source failure.
-            return None
         params = {
             "latitude": lat,
             "longitude": lon,
@@ -455,6 +450,13 @@ class WeatherData:
                     continue
                 members.append(max(vals) if kind == "high" else min(vals))
 
+        if (len(members) < 5 and seen["date_not_in_range"] and not seen["series"]
+                and target_date < dt.datetime.now(ZoneInfo(tz_name)).date()):
+            # The day is over locally (its market stays open until the report
+            # settles it) and the forecast window starts today. Expected, not
+            # a failed source: it used to warn and count against the ensemble.
+            log.debug("ensemble: %s is before today's forecast window", target_date)
+            return None
         if len(members) < 5:
             log.warning(
                 "Ensemble unusable for %s %s: %d members from %d blocks / %d "
