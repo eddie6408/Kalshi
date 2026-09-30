@@ -131,7 +131,11 @@ class FakeReader:
 
 def test_registry_versions_rules_never_overwrites_and_blocks_a_mismatched_series():
     s = _store()
-    ms = [dict(m) for m in FIX["markets"]]
+    # Recorded fixtures carry real close times, which pass. Keep every market
+    # open for the test, whatever day it runs (this test blocked the bot's
+    # startup at 04:59 UTC on 2026-09-30, when the fixture's close passed).
+    future = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    ms = [dict(m, close_time=future) for m in FIX["markets"]]
     reader = FakeReader(ms, FIX["series"])
     reg = WeatherRegistry(s, reader, QuotaGuard(s, sleep=lambda x: None), {"KXHIGHNY": "NYC"})
     out = reg.refresh()
