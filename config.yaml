@@ -52,7 +52,7 @@ execution:
   # exceed this is refused. Keep it in step with max_contracts_per_trade -
   # 25 contracts can cost up to $25, so a lower number here silently blocks
   # every full-size trade. Set to 0 to disable the check.
-  max_unhedged_exposure_usd: 25.0
+  max_unhedged_exposure_usd: 50.0   # in step with 50 contracts per trade, 2026-10-01
   reprice_before_send: true
   # The positions endpoint lags a fill by a second or two; reading it at once
   # reported a mismatch on a trade that had actually filled.
@@ -384,7 +384,7 @@ arbitrage:
   # Raised to 25 on 2026-09-14 to exercise the DEMO order path. At 1 contract
   # Kalshi's per-leg fee rounds up to a whole cent and eats ~75% of a typical
   # 4c edge; at 25 the same structure drags ~50% and can clear the gate.
-  max_contracts_per_trade: 25
+  max_contracts_per_trade: 50   # 25 -> 50, operator 2026-10-01 (demo)
   min_net_edge_per_contract: 0.005
   safety_buffer_usd: 0.0
   ladder_close_tolerance_minutes: 5
@@ -434,7 +434,7 @@ forecast:
   # trust my own model" setting. Raise it only after the calibration report
   # says the estimates are actually well calibrated.
   kelly_fraction: 0.25
-  max_contracts_per_trade: 25
+  max_contracts_per_trade: 50   # 25 -> 50, operator 2026-10-01 (demo)
   # Never put more than this share of the bankroll into one forecast trade.
   max_bankroll_fraction: 0.02
   # An estimate has to beat the market by at least this many probability
@@ -496,7 +496,7 @@ forecast:
   max_relative_disagreement: 2.5
   # A contract cap is not a risk limit: 25 contracts is $0.50 at 2c and $24.75
   # at 99c. This caps the money.
-  max_cost_per_trade_usd: 25.0
+  max_cost_per_trade_usd: 50.0   # 25 -> 50 with the contract cap, operator 2026-10-01 (demo)
   # The largest disagreement with the market we will act on, at FULL
   # confidence, in probability points. The allowance is SCALED BY the
   # estimator's own confidence: at 0.56 confidence this 0.25 becomes a
@@ -551,7 +551,7 @@ limits:
   # retired engine and only the simulator reads it now. THIS is the enforced
   # number.
   max_market_exposure_usd: 50.0
-  max_contracts_per_trade: 25
+  max_contracts_per_trade: 50   # 25 -> 50, operator 2026-10-01 (demo)
   max_legs_per_trade: 14
   max_trades_per_scan: 1
   max_trades_per_hour: 10

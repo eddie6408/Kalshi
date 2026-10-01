@@ -294,5 +294,11 @@ def test_the_live_config_carries_the_approved_thresholds_and_exposure():
     assert g["conflict_threshold_high_f"] == 4.0 and g["conflict_threshold_low_f"] == 5.0
     assert c["limits"]["max_total_exposure_usd"] == 300.0
     assert c["limits"]["max_market_exposure_usd"] == 50.0 and c["limits"]["max_event_exposure_usd"] == 60.0
+    assert c["limits"]["max_contracts_per_trade"] == 50
+    assert c["forecast"]["max_contracts_per_trade"] == 50 and c["arbitrage"]["max_contracts_per_trade"] == 50
+    assert c["forecast"]["max_cost_per_trade_usd"] == 50.0
+    # unhedged exposure kept in step with the contract cap, or full-size
+    # baskets are refused before they start
+    assert c["execution"]["max_unhedged_exposure_usd"] >= c["limits"]["max_contracts_per_trade"] * 1.0
     # the event cap keeps headroom above the market cap
     assert c["limits"]["max_event_exposure_usd"] > c["limits"]["max_market_exposure_usd"]
