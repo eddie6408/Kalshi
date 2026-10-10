@@ -53,6 +53,21 @@ execution:
   # 25 contracts can cost up to $25, so a lower number here silently blocks
   # every full-size trade. Set to 0 to disable the check.
   max_unhedged_exposure_usd: 50.0   # in step with 50 contracts per trade, 2026-10-01
+  # Maker orders, stage 1 (Package C2 M1+M2; kalshibot/order_manager.py).
+  # Single-leg forecast BUYS rest on the book (post_only) instead of crossing:
+  # M0 measured +1.58c per filled contract resting vs -2.31c crossing
+  # (12,677 simulated orders on the production tape, 28 Sep - 10 Oct).
+  # Arbitrage legs and exits stay taker. Resting orders count against every
+  # exposure limit at full size. Set enabled: false to switch off.
+  maker:
+    enabled: true
+    improve_cents: 1           # post one cent above the best bid
+    min_edge_cents: 3          # never a price that leaves less edge than this
+    max_rest_seconds: 900      # cancel after 15 min unfilled (as simulated in M0)
+    close_within_minutes: 30   # and before the market's last half hour
+    poll_seconds: 5
+    max_resting: 5
+    maker_fee_rate: 0.0025     # conservative; weather series charge none
   reprice_before_send: true
   # The positions endpoint lags a fill by a second or two; reading it at once
   # reported a mismatch on a trade that had actually filled.

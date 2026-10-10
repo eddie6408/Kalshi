@@ -677,6 +677,19 @@ def main() -> int:
             WorkerConfig.from_dict("prod_arb", workers_cfg.get("prod_arb"), 60.0),
             prod_arb.run_pass))
 
+    # ---- maker orders, stage 1 (kalshibot/order_manager.py) - DEMO -------
+    # Orphans first: nothing this bot posted before a restart keeps working.
+    om = getattr(engine, "order_manager", None)
+    if om is not None:
+        om.cancel_orphans()
+        supervisor.add(Worker(
+            WorkerConfig.from_dict("order_manager", workers_cfg.get("order_manager"),
+                                   float(om.cfg.poll_seconds)),
+            om.run_pass))
+        print(f"{D}  maker orders ON (demo): forecast entries rest up to "
+              f"{om.cfg.max_rest_seconds:.0f}s at most {om.cfg.max_resting} at a time; "
+              f"arbitrage and exits stay taker{X}")
+
     # ---- WX-1..7: weather market taxonomy and extended modeling ---------
     # Research only (kalshibot/wx). Its own database, public production
     # market data through the GET-only reader, no trading client. The one
@@ -752,6 +765,7 @@ def main() -> int:
                             "since": getattr(engine, "_halted_at", "")},
                 "sources": MONITOR.snapshot(),
                 "wx_research": wx.summary() if wx is not None else None,
+                "maker": om.summary() if om is not None else None,
                 "prod_feed": ({"connected": bool(prod_feed.stats.connected_since),
                                "connected_since": prod_feed.stats.connected_since,
                                "last_message_at": prod_feed.stats.last_message_at,

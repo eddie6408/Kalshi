@@ -206,6 +206,16 @@ class ArbitrageEngine:
             self.manager = ExecutionManager(
                 execution_client, portfolio_client, market_client,
                 self.gate, fees, journal, settings.section("execution"))
+        #: Maker orders, stage 1 (C2 M1+M2): single-leg forecast BUYS rest on
+        #: the book instead of crossing (order_manager.py). Off unless
+        #: execution.maker.enabled; arbitrage and exits are unchanged.
+        self.order_manager = None
+        if self.manager is not None:
+            from .order_manager import MakerConfig, OrderManager
+            mcfg = MakerConfig.from_dict((settings.section("execution") or {}).get("maker"))
+            if mcfg.enabled:
+                self.order_manager = OrderManager(execution_client, portfolio_client, journal,
+                                                  mcfg, may_open=self._may_open)
 
     @staticmethod
     def _build_forecasts(fees, settings, journal=None) -> list[ForecastStrategy]:
@@ -692,6 +702,17 @@ class ArbitrageEngine:
             except Exception as exc:  # noqa: BLE001
                 log.debug("could not record near miss %s: %s", nm.describe(), exc)
 
+    def _may_open(self, op) -> tuple[bool, str]:
+        """For a resting maker order: may the engine still open this position?
+        A breaker trip or an operator pause cancels resting entries."""
+        ok, why = self._breakers_ok()
+        if not ok:
+            return False, why
+        name = strategy_name(op)
+        if name in self.paused_strategies():
+            return False, f"{name} paused by the operator"
+        return True, "ok"
+
     def _breakers_ok(self) -> tuple[bool, str]:
         """The account-level circuit breakers, checked before every entry.
 
@@ -803,10 +824,13 @@ class ArbitrageEngine:
         if op.gross_cost > self.limits.max_event_exposure_usd:
             return False, (f"${op.gross_cost:.2f} > per-event limit "
                            f"${self.limits.max_event_exposure_usd:.2f}")
-        if self.exposure_usd + op.gross_cost > self.limits.max_total_exposure_usd:
+        om = getattr(self, "order_manager", None)
+        resting_total = om.total_resting_cost() if om is not None else 0.0
+        if self.exposure_usd + resting_total + op.gross_cost > self.limits.max_total_exposure_usd:
             return False, (f"total exposure would reach "
-                           f"${self.exposure_usd + op.gross_cost:.2f} > "
-                           f"${self.limits.max_total_exposure_usd:.2f}")
+                           f"${self.exposure_usd + resting_total + op.gross_cost:.2f} > "
+                           f"${self.limits.max_total_exposure_usd:.2f}"
+                           + (f" (incl. ${resting_total:.2f} resting)" if resting_total else ""))
         cutoff = datetime.now(timezone.utc).timestamp() - 3600
         recent = [t for t in self.trade_times if t.timestamp() > cutoff]
         if len(recent) >= self.limits.max_trades_per_hour:
@@ -958,6 +982,12 @@ class ArbitrageEngine:
 
             held, held_cost = self._holding(ticker, side)
             pending = self._pending_cost.get((ticker, side), 0.0)
+            # A resting maker order can fill at any moment: it counts in full.
+            om = getattr(self, "order_manager", None)
+            if om is not None:
+                if om.has_resting(ticker):
+                    return False, f"a maker order is already resting in {ticker}"
+                pending += om.resting_cost(ticker, side)
 
             # 1. No doubling down. Adding to a position we already hold, on
             #    the same side, is a separate decision from opening one - and
@@ -1093,6 +1123,19 @@ class ArbitrageEngine:
                 # explain the result.
                 log.info("ARBITRAGE SKIPPED  %s: position worker is exiting %s",
                          op.summary(), ", ".join(sorted(clash)))
+                continue
+            om = getattr(self, "order_manager", None)
+            if om is not None and om.handles(op):
+                result = om.post(op)
+                result.mode = self.mode.value
+                report.trades.append(result)
+                if result.outcome is TradeOutcome.RESTING:
+                    self.trade_times.append(datetime.now(timezone.utc))
+                    if self.journal is not None:
+                        try:
+                            self.journal.log_trade_result(result)
+                        except Exception as exc:  # noqa: BLE001
+                            log.error("MAKER  could not journal the posting: %s", exc)
                 continue
             result = self.manager.execute(op)
             result.mode = self.mode.value

@@ -58,6 +58,9 @@ class TradeOutcome(str, Enum):
     PARTIAL_FILLED = "PARTIAL_FILLED"
     ABORTED_PRE_TRADE = "ABORTED_PRE_TRADE"
     FAILED = "FAILED"
+    #: A maker order posted and resting on the book (order_manager.py); its
+    #: fills are journalled as they arrive.
+    RESTING = "RESTING"
 
 
 @dataclass
