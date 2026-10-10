@@ -174,6 +174,14 @@ weather:
   # RMSE 1.28F vs best single model (HRRR) 1.59F, NBM 2.77F; daily low 1.49F
   # vs 1.81F. It re-centres the ensemble; spread, nowcast and cross-checks
   # are unchanged.
+  # Nowcast recalibration (kalshibot/recalibration.py), fitted from its own
+  # settled record by scripts/fit_nowcast_recalibration.py. 2026-10-10: over
+  # 171 contracts it was under-confident (65-85% happened 95-100%, 15-35%
+  # happened 0-17%); out-of-fold Brier lows 0.0255 -> 0.0227, highs 0.0862
+  # -> 0.0853. Applied per kind only where it beat the raw probabilities.
+  recalibration:
+    enabled: true
+    path: data/nowcast_recal.json
   blend:
     enabled: true
     params_path: data/weather_blend.json
@@ -694,6 +702,11 @@ calibration:
   # DEGRADED is still decided on rows. Refusing to trade on thin evidence
   # costs an opportunity; permitting trading on thin evidence costs money.
   min_contracts: 100
+  # Distinct events (series x target date) before ANY verdict, and abstain
+  # when every outcome went one way (2026-10-10: inflation was suspended on
+  # one PCE release - 6 strikes, all NO - against a hindsight benchmark).
+  min_events: 3
+  degenerate_base_rate: 0.02
   # Ignore forecasts made before this timestamp. A configuration change makes
   # a different forecaster: on 21 September the lead gate cut trading from
   # fourteen days out to six hours, and averaging both sides of that line
@@ -738,7 +751,8 @@ market_skill:
     # ensemble@2 (29 Sep): re-centred on the multi-model blend - a different
     # forecaster from the ensemble alone, so its record starts at deployment.
     ensemble: "2026-09-29T08:32:00"
-    nowcast: "2026-09-29T05:16:00"
+    # nowcast@3 (10 Oct): recalibrated probabilities - a new record.
+    nowcast: "2026-10-10T19:00:00"
   min_contracts: 15
   # "Significantly" = more than `margin` Brier points, at `z` standard errors
   # computed across contracts.
@@ -947,6 +961,13 @@ workers:
   wx_research:
     enabled: true
     interval_seconds: 120
+
+  # Production arbitrage check: 0 tradable in 34,886 event checks (29 Sep -
+  # 10 Oct; median miss 1c). Every 15 min instead of every minute - it keeps
+  # watching for a change at a fraction of the REST load.
+  prod_arb:
+    enabled: true
+    interval_seconds: 900
 
   # Scoring: what did the temperature actually DO?
   #

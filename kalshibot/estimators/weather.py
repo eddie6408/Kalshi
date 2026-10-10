@@ -50,7 +50,10 @@ def _norm_cdf(x: float) -> float:
 
 #: Bump when a model's maths or constants change, so every forecast and
 #: trade names the model that produced it (research brief section 24).
-MODEL_VERSIONS = {"ensemble": "2", "nowcast": "2"}
+#: nowcast@3 (2026-10-10): nowcast@2 + the fitted recalibration
+#: (kalshibot/recalibration.py) - a different forecaster, so its market-skill
+#: record restarts (market_skill.model_since.nowcast).
+MODEL_VERSIONS = {"ensemble": "2", "nowcast": "3"}
 
 #: Worst source tier behind each model's number (1 = the organisation that
 #: publishes it, 2 = an established redistributor - Open-Meteo).
@@ -99,6 +102,24 @@ class WeatherTemperatureEstimator:
         #: no longer match what this estimator prices (different station or
         #: settlement source). Those are skipped. It can only remove markets.
         self.blocked_series = None
+        #: Recalibration of the nowcast's probabilities (fitted by
+        #: scripts/fit_nowcast_recalibration.py). Off, missing or not enabled
+        #: for a kind = the raw nowcast probability, as before.
+        rcfg = self.cfg.get("recalibration") or {}
+        self.recal_enabled = bool(rcfg.get("enabled", True))
+        self.recal_path = rcfg.get("path", "data/nowcast_recal.json")
+        self._recal = None
+        self._recal_at = 0.0
+
+    def recalibrator(self):
+        from ..recalibration import Recalibrator
+        now = time.time()
+        if self._recal is None or now - self._recal_at > 600:
+            p = Path(self.recal_path)
+            p = p if p.is_absolute() else Path(__file__).resolve().parents[2] / p
+            self._recal = Recalibrator.load(p)
+            self._recal_at = now
+        return self._recal
 
     def blend_params(self) -> _wb.BlendParams:
         now = time.time()
@@ -342,10 +363,17 @@ class WeatherTemperatureEstimator:
             conf0 *= 0.75            # the models disagree: trust the centre less
         prob, conf, model = ens_prob, conf0, "ensemble"
         nc, hm = self._nowcast(cfg, fc, target, tz_name)
+        nc_raw, recal_version = None, None
         if nc is not None:
             prob = min(0.995, max(0.005, nc.probability_between(lo, hi)))
             conf = self._nowcast_confidence(nc)
             model = "nowcast"
+            kind_u = str(cfg.get("kind", "high")).upper()
+            rc = self.recalibrator() if self.recal_enabled else None
+            if rc is not None and rc.applies(kind_u):
+                nc_raw = prob
+                prob = min(0.995, max(0.005, rc(kind_u, prob, lo is not None and hi is not None)))
+                recal_version = rc.version
 
         now = dt.datetime.now(dt.timezone.utc)
 
@@ -411,6 +439,8 @@ class WeatherTemperatureEstimator:
                 "model": model,
                 "model_version": f"{self.name}/{model}@{MODEL_VERSIONS[model]}",
                 "source_tier": MODEL_SOURCE_TIER[model],
+                "nowcast_raw_probability": round(nc_raw, 4) if nc_raw is not None else None,
+                "recalibration": recal_version,
                 "alt_model": "ensemble" if model == "nowcast" else None,
                 "alt_probability": round(ens_prob, 4) if model == "nowcast" else None,
                 "nowcast": ({

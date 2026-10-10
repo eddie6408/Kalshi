@@ -53,7 +53,19 @@ MODEL_RUN_CACHE_SECONDS = 600
 HRRR_URL = "https://api.open-meteo.com/v1/forecast"
 HRRR_MODEL = "gfs_hrrr"
 HRRR_META_URL = "https://api.open-meteo.com/data/ncep_hrrr_conus/static/meta.json"
-HRRR_CACHE_SECONDS = 600
+#: HRRR runs hourly; the nowcast does not need it fresher than half-hourly
+#: (was 600s - ~1,500 Open-Meteo calls a day).
+HRRR_CACHE_SECONDS = 1800
+
+#: The ensemble only changes when a model publishes a new run (GEFS / ICON-EPS
+#: 4x a day, ECMWF ENS 2x). Re-downloading every 30 minutes returned the same
+#: numbers and spent Open-Meteo's daily allowance by ~18:00 UTC every day
+#: (2026-10-03..09), leaving the evening to the NWS fallback. Now: never
+#: sooner than MIN, refetch when the run metadata shows a new run, and always
+#: by MAX (or FALLBACK when the metadata cannot be read).
+ENSEMBLE_MIN_REFRESH_SECONDS = 1800
+ENSEMBLE_FALLBACK_REFRESH_SECONDS = 7200
+ENSEMBLE_MAX_AGE_SECONDS = 6 * 3600
 
 #: Open-Meteo refused us (429: the free tier's daily / hourly / minute limit).
 #: Every caller backs off until this monotonic time; the NWS fallback prices
@@ -388,8 +400,8 @@ class WeatherData:
         src = "open_meteo_ensemble"
         raw_key = (round(lat, 3), round(lon, 3), tz_name, self.forecast_days)
         hit = self._ens_raw.get(raw_key)
-        if hit and time.time() - hit[0] < self.cache.ttl:
-            _, payload, status, latency_ms, retrieved_at = hit
+        if hit and self._ensemble_still_current(hit):
+            _, payload, status, latency_ms, retrieved_at, _runs = hit
         else:
             if open_meteo_backing_off():
                 return None           # rate-limited: the NWS fallback prices meanwhile
@@ -414,7 +426,8 @@ class WeatherData:
                 return None
             latency_ms = (time.monotonic() - t0) * 1000
             _note_ok()
-            self._ens_raw[raw_key] = (time.time(), payload, status, latency_ms, retrieved_at)
+            self._ens_raw[raw_key] = (time.time(), payload, status, latency_ms, retrieved_at,
+                                      self._ensemble_runs())
 
         blocks = payload if isinstance(payload, list) else [payload]
         members: list[float] = []
@@ -495,6 +508,27 @@ class WeatherData:
         if oid is not None:
             fc.provenance.append(oid)
         return fc
+
+    def _ensemble_runs(self) -> dict:
+        """{model: run initialisation time} from Open-Meteo's run metadata
+        (static files, cached); {} if unreadable."""
+        try:
+            _, vintage = self._model_run_vintage()
+        except Exception:  # noqa: BLE001
+            return {}
+        return {m: (v or {}).get("run") for m, v in (vintage or {}).items() if (v or {}).get("run")}
+
+    def _ensemble_still_current(self, hit) -> bool:
+        age = time.time() - hit[0]
+        if age < ENSEMBLE_MIN_REFRESH_SECONDS:
+            return True
+        if age >= ENSEMBLE_MAX_AGE_SECONDS:
+            return False
+        stored = hit[5] if len(hit) > 5 else {}
+        now_runs = self._ensemble_runs()
+        if stored and now_runs:
+            return now_runs == stored          # same runs: same numbers
+        return age < ENSEMBLE_FALLBACK_REFRESH_SECONDS
 
     def _model_run_vintage(self) -> tuple[dt.datetime | None, dict]:
         """Which model runs Open-Meteo is serving: (oldest release time,

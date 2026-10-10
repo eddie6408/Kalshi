@@ -184,6 +184,8 @@ class ProductionWatch:
         #: the book is trusted; otherwise the polled book, as before.
         self.live_state = None
         self.live_hits = 0
+        #: book reads served from the socket instead of REST
+        self.live_books = 0
 
     # ---- called from the strategy's thread ------------------------------
     def watch(self, ticker: str, info: dict | None = None) -> None:
@@ -279,12 +281,31 @@ class ProductionWatch:
         log.debug("PRODWATCH  %s failed: %s", what, exc)
         return True
 
+    def _live_book(self, ticker: str):
+        """The real-time book for this market, when the production socket is
+        up and the book trusted - else None."""
+        live = self.live_state
+        if live is None:
+            return None
+        up = getattr(live, "feed_live", None)
+        e = live.entry(ticker) if callable(up) and up() else None
+        if e is not None and e.trusted and e.source == "ws":
+            return e.to_book()
+        return None
+
     def _read_book(self, ticker: str, stats: dict) -> bool:
-        self.limiter.wait()
-        try:
-            book = self.reader.orderbook(ticker)
-        except Exception as exc:  # noqa: BLE001
-            return self._failed(f"book {ticker}", exc, stats)
+        # The production socket already keeps this book current. Downloading
+        # it again cost ~55,000 REST calls a day and the 429s that came with
+        # them (2026-10-03..10). Listeners and the recorder get the same book.
+        book = self._live_book(ticker)
+        if book is not None:
+            self.live_books += 1
+        else:
+            self.limiter.wait()
+            try:
+                book = self.reader.orderbook(ticker)
+            except Exception as exc:  # noqa: BLE001
+                return self._failed(f"book {ticker}", exc, stats)
         now = self.clock()
         q = Quote.of(ticker, book, now)
         horizon = now - self.cfg.history_minutes * 60
@@ -361,6 +382,7 @@ class ProductionWatch:
         return True
 
     def summary(self) -> str:
-        live = (f", {self.live_hits} real-time reads" if self.live_state is not None else "")
+        live = (f", {self.live_hits} real-time reads, {self.live_books} books from the socket"
+                if self.live_state is not None else "")
         return (f"{len(self._w)} markets watched, {self.books_read} books, "
                 f"{self.trades_read} prints, {self.errors} errors{live}")

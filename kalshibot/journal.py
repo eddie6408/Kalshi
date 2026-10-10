@@ -922,9 +922,17 @@ class Journal:
             f"SELECT COUNT(*) c FROM (SELECT DISTINCT ticker, strike "
             f"FROM probability_log WHERE {clause})", args).fetchone()["c"] or 0)
 
+        # Distinct EVENTS (series x target date: one weather day, one data
+        # release). Contracts of one event share one outcome draw - six CPI
+        # strikes are one release, not six facts.
+        events = int(self.conn.execute(
+            f"SELECT COUNT(*) c FROM (SELECT DISTINCT series, target_date "
+            f"FROM probability_log WHERE {clause})", args).fetchone()["c"] or 0)
+
         return {
             "n": n,
             "contracts": contracts,
+            "events": events,
             "brier": float(r["brier"]) if n else None,
             "mean_forecast": float(r["mean_p"]) if n else None,
             "base_rate": float(r["base"]) if n else None,

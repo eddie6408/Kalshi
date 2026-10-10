@@ -64,6 +64,13 @@ class CalibrationConfig:
     #: 1,605 forecasts while the dashboard, counting contracts, said there was
     #: not yet enough to judge. Both were reading the same database.
     min_contracts: int = 100
+    #: No verdict either way - not even DEGRADED - on fewer distinct events
+    #: than this. 2026-10-03: inflation was suspended on 198 rows that were 6
+    #: strikes of ONE PCE release, all settling NO.
+    min_events: int = 3
+    #: A base rate this close to 0 or 1 makes "climatology" a forecaster that
+    #: knew the answers (Brier ~0), which no real model can beat. Abstain.
+    degenerate_base_rate: float = 0.02
     #: Ignore forecasts made before this timestamp (ISO, or "" for all).
     #:
     #: A configuration change makes a different forecaster. On 21 September
@@ -88,6 +95,8 @@ class CalibrationConfig:
             enabled=bool(d.get("enabled", True)),
             min_sample=int(d.get("min_sample", 30)),
             min_contracts=int(d.get("min_contracts", 100)),
+            min_events=int(d.get("min_events", 3)),
+            degenerate_base_rate=float(d.get("degenerate_base_rate", 0.02)),
             since=str(d.get("since", "") or ""),
             calibrated_margin=float(d.get("calibrated_margin", 0.01)),
             degraded_margin=float(d.get("degraded_margin", 0.03)),
@@ -199,6 +208,21 @@ class CalibrationGate:
                 base_rate=base, mean_forecast=stats.get("mean_forecast"),
                 detail=(f"{n} settled forecasts, need {self.cfg.min_sample} "
                         f"before this can be judged either way"))
+
+        events = stats.get("events")
+        if events is not None and int(events) < self.cfg.min_events:
+            return Verdict(
+                CalibrationState.UNPROVEN, n=n, brier=brier, benchmark=bench,
+                base_rate=base, mean_forecast=stats.get("mean_forecast"),
+                detail=(f"{n} forecasts from only {events} distinct event(s); need "
+                        f"{self.cfg.min_events} before judging either way"))
+        if base is not None and (base <= self.cfg.degenerate_base_rate
+                                 or base >= 1 - self.cfg.degenerate_base_rate):
+            return Verdict(
+                CalibrationState.UNPROVEN, n=n, brier=brier, benchmark=bench,
+                base_rate=base, mean_forecast=stats.get("mean_forecast"),
+                detail=(f"every settled outcome went one way (base rate {base:.0%}); "
+                        f"a climatology benchmark built from that is hindsight"))
 
         edge = bench - brier
 

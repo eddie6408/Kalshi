@@ -65,9 +65,15 @@ def main() -> int:
         return 1
     print("LIVE PAPER ACCOUNT - SIMULATED on production prices; no orders, no money")
     fc = [r for r in rows if r["kind"] == "FORECAST"]
-    section("weather, allowed by the market-skill gate", [r for r in fc if not r["gate_blocked"]])
-    section("weather, the gate would have BLOCKED", [r for r in fc if r["gate_blocked"]])
-    section("weather, all", fc)
+    # Strategy decides the label: inflation paper trades used to be reported
+    # under "weather" because both are FORECAST positions.
+    infl = [r for r in fc if "inflation" in str(r.get("strategy") or "")
+            or str(r.get("ticker") or "").startswith(("KXCPI", "KXPCE"))]
+    wx = [r for r in fc if r not in infl]
+    section("weather, allowed by the market-skill gate", [r for r in wx if not r["gate_blocked"]])
+    section("weather, the gate would have BLOCKED", [r for r in wx if r["gate_blocked"]])
+    section("weather, all", wx)
+    section("inflation, all", infl)
     section("arbitrage on production books", [r for r in rows if r["kind"] == "ARB"])
     try:
         ck = [dict(r) for r in conn.execute("SELECT * FROM prod_arb_checks")]
