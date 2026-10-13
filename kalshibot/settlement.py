@@ -119,14 +119,30 @@ def resolution_of(market) -> bool | None:
     return None
 
 
+#: A market found still open is not asked again for this long. Finished
+#: days are re-checked sooner than future ones (a CPI release weeks away).
+RECHECK_PAST_SECONDS = 1800
+RECHECK_FUTURE_SECONDS = 6 * 3600
+
+
 def settle_forecasts(journal, market_client, limit: int = 2000,
-                     exchange_tickers: set[str] | None = None
-                     ) -> SettlementReport:
+                     exchange_tickers: set[str] | None = None,
+                     recheck: dict | None = None, max_tickers: int = 300,
+                     clock=None) -> SettlementReport:
     """Score every forecast whose market has now resolved.
 
     Safe to run repeatedly: a settled row is never revisited, and a market
     that has not resolved is simply left for next time.
+
+    By MARKET when the journal supports it (unsettled_tickers): finished
+    days first, every row of a resolved market settled in one write, and -
+    with `recheck` (a dict kept by the caller) - a market still open is not
+    asked again for a while, so the same unresolvable markets cannot take
+    every slot on every pass.
     """
+    if hasattr(journal, "unsettled_tickers"):
+        return _settle_by_market(journal, market_client, exchange_tickers, recheck,
+                                 max_tickers, clock)
     report = SettlementReport()
     try:
         rows = journal.unsettled_probabilities(limit=limit)
@@ -158,6 +174,48 @@ def settle_forecasts(journal, market_client, limit: int = 2000,
     book_settled_positions(journal, market_client, report, resolutions,
                            exchange_tickers=exchange_tickers)
     log.info("SETTLE  %s", report.summary())
+    return report
+
+
+def _settle_by_market(journal, market_client, exchange_tickers, recheck, max_tickers,
+                      clock) -> SettlementReport:
+    import time as _time
+    from datetime import datetime, timezone
+    clock = clock or _time.monotonic
+    report = SettlementReport()
+    now = clock()
+    skip = {t for t, due in (recheck or {}).items() if due > now} if recheck is not None else set()
+    try:
+        todo = journal.unsettled_tickers(limit=max_tickers, skip=skip)
+    except Exception as exc:  # noqa: BLE001
+        log.error("SETTLE  could not read unsettled forecasts: %s", exc)
+        report.errors += 1
+        return report
+    today = datetime.now(timezone.utc).date().isoformat()
+    resolutions: dict[str, bool | None] = {}
+    for row in todo:
+        ticker = row["ticker"]
+        report.checked += int(row["n"] or 0)
+        outcome = _resolve(market_client, ticker, report)
+        resolutions[ticker] = outcome
+        if outcome is None:
+            report.still_open += int(row["n"] or 0)
+            if recheck is not None:
+                past = bool(row["target_date"]) and str(row["target_date"])[:10] < today
+                recheck[ticker] = now + (RECHECK_PAST_SECONDS if past else RECHECK_FUTURE_SECONDS)
+            continue
+        try:
+            scores = journal.settle_ticker(ticker, outcome)
+            report.scores.extend(scores)
+            report.settled += len(scores)
+            if recheck is not None:
+                recheck.pop(ticker, None)
+        except Exception as exc:  # noqa: BLE001
+            log.error("SETTLE  could not score %s: %s", ticker, exc)
+            report.errors += 1
+    book_settled_positions(journal, market_client, report, resolutions,
+                           exchange_tickers=exchange_tickers)
+    log.info("SETTLE  %s (%d markets this pass, %d deferred)", report.summary(), len(todo), len(skip))
     return report
 
 

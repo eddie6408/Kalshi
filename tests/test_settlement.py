@@ -239,3 +239,49 @@ def test_the_dollar_spelling_of_the_final_price_is_read():
 def test_expiration_value_is_read_as_cents():
     assert resolution_of(FakeMarket(status="settled", expiration_value=100)) is True
     assert resolution_of(FakeMarket(status="settled", expiration_value=0)) is False
+
+
+# ---- 2026-10-13: 12 days of forecasts never scored ----------------------
+def test_far_future_markets_cannot_starve_ones_that_have_resolved():
+    """The bug: the pass read the 2,000 oldest unsettled ROWS. From 1 Oct
+    those were all inflation forecasts for releases weeks away, so no
+    weather forecast after 30 Sep was ever scored."""
+    with tempfile.TemporaryDirectory() as tmp:
+        j = _journal(tmp)
+        for i in range(2500):          # old rows that cannot resolve yet
+            _forecast(j, f"CPI-{i % 5}", 0.4, target_date="2026-11-01")
+        _forecast(j, "WX-NEW", 0.9, target_date="2026-10-05")
+        markets = FakeMarkets({**{f"CPI-{k}": FakeMarket(status="active", result="")
+                                  for k in range(5)},
+                               "WX-NEW": FakeMarket(status="settled", result="yes")})
+        rep = settle_forecasts(j, markets)
+        assert rep.settled == 1
+        assert markets.asked[0] == "WX-NEW"        # finished day first
+        row = j.conn.execute("SELECT settled_yes, brier FROM probability_log "
+                             "WHERE ticker='WX-NEW'").fetchone()
+        assert row[0] == 1 and abs(row[1] - 0.01) < 1e-9
+
+
+def test_every_row_of_a_resolved_market_settles_at_once():
+    with tempfile.TemporaryDirectory() as tmp:
+        j = _journal(tmp)
+        for p in (0.2, 0.5, 0.7):
+            _forecast(j, "A", p, target_date="2026-10-01")
+        rep = settle_forecasts(j, FakeMarkets({"A": FakeMarket(status="settled", result="no")}))
+        assert rep.settled == 3
+        assert j.conn.execute("SELECT COUNT(*) FROM probability_log WHERE settled_yes IS NULL"
+                              ).fetchone()[0] == 0
+
+
+def test_a_market_still_open_is_not_asked_again_until_its_recheck_is_due():
+    with tempfile.TemporaryDirectory() as tmp:
+        j = _journal(tmp)
+        _forecast(j, "OPEN", 0.5, target_date="2099-01-01")
+        markets = FakeMarkets({"OPEN": FakeMarket(status="active", result="")})
+        recheck, t = {}, [1000.0]
+        settle_forecasts(j, markets, recheck=recheck, clock=lambda: t[0])
+        settle_forecasts(j, markets, recheck=recheck, clock=lambda: t[0])
+        assert markets.asked == ["OPEN"]            # deferred on the second pass
+        t[0] += 6 * 3600 + 1
+        settle_forecasts(j, markets, recheck=recheck, clock=lambda: t[0])
+        assert markets.asked == ["OPEN", "OPEN"]

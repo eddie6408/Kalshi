@@ -1100,8 +1100,11 @@ class ArbitrageEngine:
         """Score forecasts whose markets have resolved. Cheap, and the only
         thing that ever turns an opinion into a measurement."""
         try:
+            if not hasattr(self, "_settle_recheck"):
+                self._settle_recheck = {}
             settle_forecasts(self.journal, self.market,
-                             exchange_tickers=set(self._positions))
+                             exchange_tickers=set(self._positions),
+                             recheck=self._settle_recheck)
         except Exception as exc:  # noqa: BLE001
             log.error("SETTLE  pass failed: %s", exc)
 

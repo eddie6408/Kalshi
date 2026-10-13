@@ -839,6 +839,42 @@ class Journal:
             "SELECT * FROM probability_log WHERE settled_yes IS NULL "
             "ORDER BY ts LIMIT ?", (limit,)))
 
+    def unsettled_tickers(self, limit: int = 300, skip: set | None = None) -> list[sqlite3.Row]:
+        """Markets with unsettled forecasts, finished days first.
+
+        Work comes by MARKET, ordered by target date (oldest first, undated
+        last), so markets that cannot resolve yet - next month's CPI - never
+        sit in front of ones that already have. Reading the oldest 2,000 ROWS
+        did exactly that: from 1 Oct every slot was an inflation forecast for
+        a release weeks away, and no weather forecast was scored for 12 days.
+        """
+        skip = skip or set()
+        out = []
+        for r in self.conn.execute(
+                "SELECT ticker, MAX(target_date) target_date, COUNT(*) n, MIN(ts) first_ts "
+                "FROM probability_log WHERE settled_yes IS NULL GROUP BY ticker "
+                "ORDER BY (MAX(target_date) IS NULL), MAX(target_date), MIN(ts)"):
+            if r["ticker"] in skip:
+                continue
+            out.append(r)
+            if len(out) >= limit:
+                break
+        return out
+
+    def settle_ticker(self, ticker: str, settled_yes: bool) -> list[float]:
+        """Score every unsettled forecast of one market in one write. Returns
+        their Brier scores."""
+        outcome = 1 if settled_yes else 0
+        rows = list(self.conn.execute(
+            "SELECT id, our_probability FROM probability_log WHERE ticker=? "
+            "AND settled_yes IS NULL", (ticker,)))
+        now = _now()
+        self.conn.executemany(
+            "UPDATE probability_log SET settled_yes=?, settled_at=?, brier=? WHERE id=?",
+            [(outcome, now, (float(r["our_probability"]) - outcome) ** 2, r["id"]) for r in rows])
+        self.conn.commit()
+        return [(float(r["our_probability"]) - outcome) ** 2 for r in rows]
+
     def settle_probability(self, row_id: int, settled_yes: bool) -> float:
         """Score one forecast against what happened. Returns its Brier score."""
         row = self.conn.execute(
