@@ -31,6 +31,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=str(ROOT / "data" / "journal.db"))
     ap.add_argument("--since", default="2026-09-29T05:16")
+    # Rows logged by nowcast@3 carry the ALREADY recalibrated probability;
+    # fit on the raw (nowcast@2) period only, or the map corrects itself.
+    ap.add_argument("--until", default="2026-10-10T17:08")
     ap.add_argument("--model", default="nowcast")
     ap.add_argument("--l2", type=float, default=2.0)
     ap.add_argument("--out", default=str(ROOT / "data" / "nowcast_recal.json"))
@@ -40,10 +43,10 @@ def main() -> int:
     rows = c.execute(
         "SELECT ticker, series, target_date, our_probability, settled_yes FROM probability_log "
         "WHERE estimator='weather_temperature' AND model=? AND settled_yes IS NOT NULL "
-        "AND ts >= ?", (a.model, a.since)).fetchall()
+        "AND ts >= ? AND ts < ?", (a.model, a.since, a.until)).fetchall()
     per = Counter(r[0] for r in rows)
     out = {"fitted_at": datetime.now(timezone.utc).isoformat(), "version": rc.VERSION,
-           "model": a.model, "since": a.since, "kinds": {}}
+           "model": a.model, "since": a.since, "until": a.until, "kinds": {}}
     for kind in ("HIGH", "LOW"):
         rs = [r for r in rows if r[1].startswith("KXLOWT") == (kind == "LOW")]
         if not rs:
