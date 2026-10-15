@@ -427,6 +427,14 @@ arbitrage:
 # Nothing here is ever guaranteed. A forecast can be wrong, so these trades are
 # sized small, judged on expected value, and can be turned off in one line.
 forecast:
+  # FROZEN strategies keep pricing, logging and paper-tracking (a data
+  # recorder) but never open a position, and a dashboard click cannot
+  # resume them. 2026-10-15 (operator): weather frozen - on production prices
+  # the market beat every weather model (nowcast@3 skill -0.054 over 230
+  # contracts, ensemble -0.149); kept recording in case another research
+  # direction revives it. Remove from this list to unfreeze.
+  frozen:
+    - weather_temperature
   # Master switch. Off means the bot is a structural-arbitrage scanner only.
   enabled: false
   # Which estimators to run. Names must exist in kalshibot/estimators/registry.py.

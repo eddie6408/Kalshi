@@ -201,3 +201,26 @@ def test_suspension_is_per_pass_not_shared_state():
     assert only_bad == {"bad"}
     # The second call must not have retroactively changed the first answer.
     assert only_good == set()
+
+
+def test_a_strategy_frozen_in_config_stays_paused_whatever_the_pause_file_says():
+    """2026-10-15: weather frozen as a data recorder. A dashboard 'resume'
+    (the pause file) must not reopen it."""
+    import json, tempfile
+    from pathlib import Path
+    from kalshibot.arb_engine import ArbitrageEngine
+    d = Path(tempfile.mkdtemp())
+    (d / "paused.json").write_text(json.dumps({"paused": {"inflation_nowcast": True}}))
+
+    class S:
+        def path(self, key, default):
+            return d
+
+        def section(self, name):
+            return {"frozen": ["weather_temperature"]} if name == "forecast" else {}
+    e = ArbitrageEngine.__new__(ArbitrageEngine)
+    e.s = S()
+    assert e.paused_strategies() == {"weather_temperature", "inflation_nowcast"}
+    (d / "paused.json").write_text(json.dumps({"paused": {}}))   # "resume all"
+    e._paused_at = 0.0
+    assert e.paused_strategies() == {"weather_temperature"}

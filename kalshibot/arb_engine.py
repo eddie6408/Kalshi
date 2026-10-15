@@ -876,6 +876,15 @@ class ArbitrageEngine:
         except (OSError, ValueError) as exc:
             log.warning("RISK  could not read the pause file: %s", exc)
             self._paused = set()
+        # Frozen in config (forecast.frozen): a deliberate, durable decision.
+        # Unlike a dashboard pause it cannot be resumed by a click - the
+        # strategy keeps pricing and recording (a data recorder) and opens
+        # nothing until the config says otherwise.
+        try:
+            frozen = set((s.section("forecast") or {}).get("frozen") or []) if hasattr(s, "section") else set()
+        except Exception:  # noqa: BLE001
+            frozen = set()
+        self._paused = set(self._paused) | {str(x) for x in frozen}
         return self._paused
 
     def _conflict_ok(self, op: ArbitrageOpportunity) -> tuple[bool, str]:
